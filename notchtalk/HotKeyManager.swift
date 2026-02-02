@@ -6,22 +6,25 @@
 import Cocoa
 import Carbon
 
-@MainActor
-final class HotKeyManager {
+final class HotKeyManager: @unchecked Sendable {
     static let shared = HotKeyManager()
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var rightCommandDownTime: Date?
-    private var otherKeyPressed = false
 
-    var onToggle: (() -> Void)?
+    private let lock = NSLock()
+    private var _rightCommandDownTime: Date?
+    private var _otherKeyPressed = false
+
+    var onToggle: (@MainActor () -> Void)?
 
     private init() {}
 
+    @MainActor
     func start() {
         guard AXIsProcessTrusted() else {
             requestAccessibilityPermission()
+            print("Accessibility permission not granted")
             return
         }
 
@@ -33,20 +36,21 @@ final class HotKeyManager {
             options: .defaultTap,
             eventsOfInterest: eventMask,
             callback: { proxy, type, event, refcon in
-                guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
                 let manager = Unmanaged<HotKeyManager>.fromOpaque(refcon).takeUnretainedValue()
                 return manager.handleEvent(proxy: proxy, type: type, event: event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            print("Failed to create event tap")
+            print("Failed to create event tap - check Accessibility permissions")
             return
         }
 
         eventTap = tap
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        print("Event tap started successfully")
     }
 
     func stop() {
@@ -54,18 +58,25 @@ final class HotKeyManager {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
         if let source = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         }
         eventTap = nil
         runLoopSource = nil
     }
 
-    private nonisolated func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        if type == .keyDown {
-            Task { @MainActor in
-                self.otherKeyPressed = true
+    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = eventTap {
+                CGEvent.tapEnable(tap: tap, enable: true)
             }
-            return Unmanaged.passRetained(event)
+            return Unmanaged.passUnretained(event)
+        }
+
+        if type == .keyDown {
+            lock.lock()
+            _otherKeyPressed = true
+            lock.unlock()
+            return Unmanaged.passUnretained(event)
         }
 
         if type == .flagsChanged {
@@ -75,29 +86,35 @@ final class HotKeyManager {
             let isRightCommand = keyCode == 54
             let commandPressed = flags.contains(.maskCommand)
 
-            Task { @MainActor in
-                if isRightCommand {
-                    if commandPressed {
-                        self.rightCommandDownTime = Date()
-                        self.otherKeyPressed = false
-                    } else {
-                        if let downTime = self.rightCommandDownTime,
-                           !self.otherKeyPressed {
-                            let duration = Date().timeIntervalSince(downTime)
-                            if duration < 0.3 {
-                                self.onToggle?()
+            if isRightCommand {
+                lock.lock()
+                if commandPressed {
+                    _rightCommandDownTime = Date()
+                    _otherKeyPressed = false
+                    lock.unlock()
+                } else {
+                    let downTime = _rightCommandDownTime
+                    let otherPressed = _otherKeyPressed
+                    _rightCommandDownTime = nil
+                    _otherKeyPressed = false
+                    lock.unlock()
+
+                    if let downTime = downTime, !otherPressed {
+                        let duration = Date().timeIntervalSince(downTime)
+                        if duration < 0.4 {
+                            DispatchQueue.main.async { [weak self] in
+                                self?.onToggle?()
                             }
                         }
-                        self.rightCommandDownTime = nil
-                        self.otherKeyPressed = false
                     }
                 }
             }
         }
 
-        return Unmanaged.passRetained(event)
+        return Unmanaged.passUnretained(event)
     }
 
+    @MainActor
     private func requestAccessibilityPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)
