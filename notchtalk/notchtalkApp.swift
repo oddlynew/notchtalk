@@ -12,15 +12,38 @@ struct notchtalkApp: App {
     @State private var appController = AppController()
 
     var body: some Scene {
-        MenuBarExtra("Notchtalk", systemImage: "mic.fill") {
+        MenuBarExtra("Notchtalk", systemImage: appController.menuBarIcon) {
+            if !appController.hasAccessibilityPermission {
+                Text("Accessibility Permission Required")
+                    .font(.headline)
+                Button("Grant Permission...") {
+                    appController.openAccessibilitySettings()
+                }
+                Divider()
+            }
+
+            if !appController.hasMicrophonePermission {
+                Text("Microphone Permission Required")
+                    .font(.headline)
+                Button("Grant Permission...") {
+                    appController.requestMicrophonePermission()
+                }
+                Divider()
+            }
+
+            Button("Settings...") {
+                SettingsWindowController.show()
+            }
+            .keyboardShortcut(",")
+
+            Divider()
+
             Button("About Notchtalk") {
                 appController.showAbout()
             }
+
             Divider()
-            Button("Open Accessibility Settings") {
-                appController.openAccessibilitySettings()
-            }
-            Divider()
+
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
@@ -34,6 +57,15 @@ struct notchtalkApp: App {
 final class AppController {
     private let stateManager = NotchStateManager()
     private var windowController: NotchWindowController?
+    private(set) var hasAccessibilityPermission = false
+    private(set) var hasMicrophonePermission = false
+
+    var menuBarIcon: String {
+        if !hasAccessibilityPermission || !hasMicrophonePermission {
+            return "exclamationmark.triangle.fill"
+        }
+        return "mic.fill"
+    }
 
     init() {
         windowController = NotchWindowController(stateManager: stateManager)
@@ -42,34 +74,75 @@ final class AppController {
         HotKeyManager.shared.onToggle = { [weak self] in
             self?.stateManager.toggle()
         }
-        HotKeyManager.shared.start()
 
+        checkAndStartHotKey()
+        checkMicrophonePermission()
         observeStateChanges()
     }
 
+    private func checkAndStartHotKey() {
+        hasAccessibilityPermission = AXIsProcessTrusted()
+        HotKeyManager.shared.start()
+
+        if !hasAccessibilityPermission {
+            Task {
+                while !AXIsProcessTrusted() {
+                    try? await Task.sleep(for: .seconds(1))
+                }
+                hasAccessibilityPermission = true
+                HotKeyManager.shared.start()
+            }
+        }
+    }
+
+    private func checkMicrophonePermission() {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            hasMicrophonePermission = true
+        case .notDetermined:
+            hasMicrophonePermission = false
+        case .denied, .restricted:
+            hasMicrophonePermission = false
+        @unknown default:
+            hasMicrophonePermission = false
+        }
+    }
+
+    func requestMicrophonePermission() {
+        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+            Task { @MainActor [weak self] in
+                self?.hasMicrophonePermission = granted
+            }
+        }
+    }
+
     private func observeStateChanges() {
-        Task { [weak self] in
-            var previousState: AppState?
-            while !Task.isCancelled {
-                guard let self else { return }
-                let currentState = stateManager.state
-                if currentState != previousState {
-                    if currentState == .idle {
+        func observe() {
+            withObservationTracking {
+                _ = stateManager.state
+            } onChange: { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if stateManager.state == .idle {
                         windowController?.hide()
                     } else {
                         windowController?.show()
                     }
-                    previousState = currentState
+                    observe()
                 }
-                try? await Task.sleep(for: .milliseconds(50))
             }
+        }
+        observe()
+
+        if stateManager.state != .idle {
+            windowController?.show()
         }
     }
 
     func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notchtalk"
-        alert.informativeText = "Press Right ⌘ to start/stop recording.\nTranscription will be copied to clipboard."
+        alert.informativeText = "Press Right ⌘ to start/stop recording.\nTranscription will be copied to clipboard and optionally pasted."
         alert.alertStyle = .informational
         alert.runModal()
     }
@@ -80,3 +153,5 @@ final class AppController {
         }
     }
 }
+
+import AVFoundation

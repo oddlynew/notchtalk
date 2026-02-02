@@ -22,6 +22,15 @@ final class NotchStateManager {
 
     private var recordingTask: Task<Void, Never>?
     private var processingTask: Task<Void, Never>?
+    private let audioRecorder = AudioRecorder()
+    private let transcriptionService = OpenAITranscriptionService()
+    private var currentRecordingURL: URL?
+
+    init() {
+        audioRecorder.onAudioLevelUpdate = { [weak self] level in
+            self?.audioLevel = level
+        }
+    }
 
     func toggle() {
         switch state {
@@ -37,15 +46,35 @@ final class NotchStateManager {
     }
 
     func startRecording() {
+        guard KeychainService.hasAPIKey else {
+            state = .error("No API key")
+            SettingsWindowController.show()
+
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                reset()
+            }
+            return
+        }
+
         state = .recording
         recordingDuration = 0
         SoundManager.shared.playStartSound()
 
         recordingTask = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(100))
-                recordingDuration += 0.1
-                audioLevel = CGFloat.random(in: 0.1...1.0)
+            do {
+                currentRecordingURL = try await audioRecorder.startRecording()
+
+                // Update duration timer
+                while !Task.isCancelled && audioRecorder.isRecording {
+                    try? await Task.sleep(for: .milliseconds(100))
+                    recordingDuration += 0.1
+                }
+            } catch {
+                await MainActor.run {
+                    self.state = .error("Mic error")
+                    SoundManager.shared.playErrorSound()
+                }
             }
         }
     }
@@ -53,21 +82,76 @@ final class NotchStateManager {
     func stopRecording() {
         recordingTask?.cancel()
         recordingTask = nil
+
+        guard let recordingURL = audioRecorder.stopRecording() else {
+            state = .error("No recording")
+            return
+        }
+
+        currentRecordingURL = recordingURL
         state = .processing
         SoundManager.shared.playStopSound()
 
         processingTask = Task {
-            try? await Task.sleep(for: .seconds(5))
+            do {
+                let prompt = SettingsManager.shared.transcriptionPrompt.isEmpty
+                    ? nil
+                    : SettingsManager.shared.transcriptionPrompt
 
-            guard !Task.isCancelled else { return }
+                let transcription = try await transcriptionService.transcribe(
+                    audioURL: recordingURL,
+                    prompt: prompt
+                )
 
-            ClipboardService.copy("hello world")
-            state = .done
+                guard !Task.isCancelled else { return }
 
-            try? await Task.sleep(for: .seconds(1.2))
+                // Copy to clipboard and optionally paste
+                if SettingsManager.shared.autoPasteEnabled {
+                    ClipboardService.copyAndPaste(transcription)
+                } else {
+                    ClipboardService.copy(transcription)
+                }
 
-            guard !Task.isCancelled else { return }
-            reset()
+                state = .done
+
+                // Clean up the recording file
+                audioRecorder.deleteRecording(at: recordingURL)
+
+                try? await Task.sleep(for: .seconds(1.2))
+
+                guard !Task.isCancelled else { return }
+                reset()
+            } catch {
+                guard !Task.isCancelled else { return }
+
+                let errorMessage: String
+                if let transcriptionError = error as? TranscriptionError {
+                    switch transcriptionError {
+                    case .noAPIKey:
+                        errorMessage = "No API key"
+                    case .apiError(let message):
+                        // Truncate long error messages
+                        errorMessage = String(message.prefix(20))
+                    default:
+                        errorMessage = "API error"
+                    }
+                } else {
+                    errorMessage = "Failed"
+                }
+
+                state = .error(errorMessage)
+                SoundManager.shared.playErrorSound()
+
+                // Clean up on error too
+                if let url = currentRecordingURL {
+                    audioRecorder.deleteRecording(at: url)
+                }
+
+                try? await Task.sleep(for: .seconds(3))
+
+                guard !Task.isCancelled else { return }
+                reset()
+            }
         }
     }
 
@@ -76,6 +160,7 @@ final class NotchStateManager {
         recordingTask = nil
         processingTask?.cancel()
         processingTask = nil
+        audioRecorder.cancelRecording()
         reset()
     }
 
@@ -83,6 +168,7 @@ final class NotchStateManager {
         state = .idle
         audioLevel = 0
         recordingDuration = 0
+        currentRecordingURL = nil
     }
 
     func retry() {
