@@ -17,19 +17,21 @@ final class NotchWindowController {
 
     func setup() {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 80),
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 60),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
 
         panel.isFloatingPanel = true
-        panel.level = .screenSaver
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.ignoresMouseEvents = false
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.animationBehavior = .none
 
         let hostingView = NSHostingView(rootView: NotchView(stateManager: stateManager))
         hostingView.frame = panel.contentView?.bounds ?? .zero
@@ -43,18 +45,6 @@ final class NotchWindowController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor [weak self] in
-                self?.updatePosition()
-            }
-        }
-
-        NotificationCenter.default.addObserver(
-            forName: NSWorkspace.activeSpaceDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
             Task { @MainActor [weak self] in
                 self?.updatePosition()
             }
@@ -73,50 +63,36 @@ final class NotchWindowController {
     private func updatePosition() {
         guard let panel else { return }
 
-        let screen = screenWithNotch() ?? NSScreen.main ?? NSScreen.screens.first
-        guard let screen else { return }
+        // Use the main screen (the one with keyboard focus) or fall back to first screen
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
 
-        let screenFrame = screen.frame
-        let panelWidth: CGFloat = 400
-        let panelHeight: CGFloat = 80
+        let panelWidth: CGFloat = 300
+        let panelHeight: CGFloat = 60
 
-        let notchInfo = notchGeometry(for: screen)
+        // Prefer the camera-notch center when available; fall back to screen center.
+        let centerX = notchCenterX(for: screen)
 
-        let x = screenFrame.minX + notchInfo.centerX - panelWidth / 2
-        let y = screenFrame.maxY - notchInfo.topInset - panelHeight + 6
+        // Position at top of screen, below menu bar/notch area
+        let topY = screen.frame.maxY - screen.safeAreaInsets.top - panelHeight
 
-        panel.setFrame(NSRect(x: x, y: y, width: panelWidth, height: panelHeight), display: true)
+        let frame = NSRect(x: centerX - panelWidth / 2, y: topY, width: panelWidth, height: panelHeight)
+        let alignedFrame = screen.backingAlignedRect(
+            frame,
+            options: [.alignMinXNearest, .alignMinYNearest, .alignWidthNearest, .alignHeightNearest]
+        )
+        panel.setFrame(alignedFrame, display: true)
     }
 
-    private func screenWithNotch() -> NSScreen? {
-        for screen in NSScreen.screens {
-            if screen.safeAreaInsets.top > 0 {
-                return screen
-            }
-        }
-        return nil
-    }
-
-    private func notchGeometry(for screen: NSScreen) -> (centerX: CGFloat, topInset: CGFloat, notchWidth: CGFloat) {
-        let hasNotch = screen.safeAreaInsets.top > 0
-        let screenWidth = screen.frame.width
-
-        if hasNotch {
-            let topInset = screen.safeAreaInsets.top
-
-            if let leftArea = screen.auxiliaryTopLeftArea,
-               let rightArea = screen.auxiliaryTopRightArea {
-                let notchLeft = leftArea.maxX
-                let notchRight = rightArea.minX
-                let notchWidth = notchRight - notchLeft
-                let notchCenterX = notchLeft + notchWidth / 2
-                return (notchCenterX, topInset, notchWidth)
-            }
-
-            return (screenWidth / 2, topInset, 200)
+    private func notchCenterX(for screen: NSScreen) -> CGFloat {
+        guard
+            let leftArea = screen.auxiliaryTopLeftArea,
+            let rightArea = screen.auxiliaryTopRightArea,
+            !leftArea.isEmpty,
+            !rightArea.isEmpty
+        else {
+            return screen.frame.midX
         }
 
-        let menuBarHeight: CGFloat = NSApp.mainMenu?.menuBarHeight ?? 24
-        return (screenWidth / 2, menuBarHeight, 0)
+        return (leftArea.maxX + rightArea.minX) / 2
     }
 }

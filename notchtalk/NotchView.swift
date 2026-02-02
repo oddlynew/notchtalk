@@ -5,214 +5,159 @@
 
 import SwiftUI
 
-struct NotchShape: Shape {
-    var cornerRadius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-
-        path.move(to: CGPoint(x: 0, y: 0))
-        path.addLine(to: CGPoint(x: rect.width, y: 0))
-        path.addLine(to: CGPoint(x: rect.width, y: rect.height - cornerRadius))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.width - cornerRadius, y: rect.height),
-            control: CGPoint(x: rect.width, y: rect.height)
-        )
-        path.addLine(to: CGPoint(x: cornerRadius, y: rect.height))
-        path.addQuadCurve(
-            to: CGPoint(x: 0, y: rect.height - cornerRadius),
-            control: CGPoint(x: 0, y: rect.height)
-        )
-        path.closeSubpath()
-
-        return path
-    }
-}
-
 struct NotchView: View {
     let stateManager: NotchStateManager
 
-    private var pillSize: CGSize {
-        switch stateManager.state {
-        case .idle:
-            CGSize(width: 200, height: 32)
-        case .recording:
-            CGSize(width: 340, height: 44)
-        case .processing:
-            CGSize(width: 280, height: 40)
-        case .done:
-            CGSize(width: 220, height: 36)
-        case .error:
-            CGSize(width: 280, height: 40)
-        }
-    }
-
-    private var cornerRadius: CGFloat {
-        switch stateManager.state {
-        case .idle:
-            return 16
-        case .recording, .processing, .done, .error:
-            return 22
-        }
+    private var isActive: Bool {
+        stateManager.state != .idle
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            content
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .frame(width: pillSize.width, height: pillSize.height)
-                .background {
-                    NotchShape(cornerRadius: cornerRadius)
-                        .fill(.black)
-                        .shadow(color: .black.opacity(0.5), radius: 15, x: 0, y: 10)
-                }
+        VStack {
+            if isActive {
+                pillContent
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule()
+                            .fill(.black)
+                            .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .contentTransition(.opacity)
-        .animation(.spring(duration: 0.25, bounce: 0.2), value: stateManager.state)
+        .animation(.spring(duration: 0.3, bounce: 0.2), value: isActive)
+        .animation(.spring(duration: 0.2), value: stateManager.state)
     }
 
     @ViewBuilder
-    private var content: some View {
+    private var pillContent: some View {
         switch stateManager.state {
         case .idle:
-            IdleView()
+            EmptyView()
+
         case .recording:
-            RecordingView(audioLevel: stateManager.audioLevel, duration: stateManager.recordingDuration)
+            HStack(spacing: 12) {
+                // Red pulsing dot
+                Circle()
+                    .fill(.red)
+                    .frame(width: 8, height: 8)
+                    .modifier(PulseModifier())
+
+                // Timer
+                Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+
+                // Visualizer
+                AudioVisualizerView(level: stateManager.audioLevel)
+                    .frame(width: 60, height: 16)
+            }
+
         case .processing:
-            ProcessingView()
+            HStack(spacing: 10) {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(.white)
+
+                AnimatedDotsText(text: "Transcribing")
+            }
+
         case .done:
-            DoneView()
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+
+                Text("Copied!")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+            }
+
         case .error(let message):
-            ErrorView(message: message)
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+
+                Text(message)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white)
+            }
         }
     }
 }
 
-struct IdleView: View {
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "mic.fill")
-                .font(.system(size: 12, weight: .medium))
-            Text("Ready")
-                .font(.system(size: 12, weight: .medium))
-        }
-        .foregroundStyle(.white.opacity(0.5))
-    }
-}
+// MARK: - Supporting Views
 
-struct RecordingView: View {
-    let audioLevel: CGFloat
-    let duration: TimeInterval
+struct PulseModifier: ViewModifier {
+    @State private var isPulsing = false
 
-    var body: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(.red)
-                .frame(width: 8, height: 8)
-                .shadow(color: .red.opacity(0.8), radius: 4)
-                .phaseAnimator([false, true]) { content, phase in
-                    content.opacity(phase ? 1.0 : 0.3)
-                } animation: { _ in
-                    .easeInOut(duration: 0.5)
+    func body(content: Content) -> some View {
+        content
+            .opacity(isPulsing ? 1.0 : 0.4)
+            .shadow(color: .red.opacity(isPulsing ? 0.6 : 0), radius: 4)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
+                    isPulsing = true
                 }
-
-            AudioVisualizerView(level: audioLevel)
-                .frame(width: 140, height: 20)
-
-            Text(Duration.seconds(duration), format: .time(pattern: .minuteSecond))
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.8))
-                .monospacedDigit()
-                .contentTransition(.numericText())
-        }
+            }
+            .onDisappear {
+                isPulsing = false
+            }
     }
 }
 
 struct AudioVisualizerView: View {
     let level: CGFloat
-    private let barCount = 24
+    private let barCount = 8
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1/30)) { _ in
-            HStack(spacing: 2) {
-                ForEach(0..<barCount, id: \.self) { index in
-                    Capsule()
-                        .fill(.white.opacity(0.9))
-                        .frame(width: 2, height: barHeight(for: index))
-                }
+        HStack(spacing: 2) {
+            ForEach(0..<barCount, id: \.self) { index in
+                Capsule()
+                    .fill(.white.opacity(0.85))
+                    .frame(width: 3, height: barHeight(for: index))
             }
         }
+        .animation(.easeOut(duration: 0.1), value: level)
     }
 
     private func barHeight(for index: Int) -> CGFloat {
-        let center = CGFloat(barCount) / 2.0
+        // For even bar counts, center between the two middle bars (e.g. 3.5 for 0...7).
+        let center = CGFloat(barCount - 1) / 2.0
         let distance = abs(CGFloat(index) - center) / center
-        let baseHeight = 0.3 + (1.0 - distance) * 0.4
-        let variation = CGFloat.random(in: 0.6...1.4)
-        return max(3, min(18, baseHeight * level * variation * 18))
+        let base = 0.3 + (1.0 - distance) * 0.5
+        let variation = sin(Double(index) * 1.5 + level * 8) * 0.3 + 0.7
+        return max(4, min(14, base * level * variation * 14))
     }
 }
 
-struct ProcessingView: View {
+struct AnimatedDotsText: View {
+    let text: String
     @State private var dotCount = 0
+    @State private var task: Task<Void, Never>?
 
     var body: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
-                .tint(.white)
-
-            Text("Transcribing\(String(repeating: ".", count: dotCount))")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: 120, alignment: .leading)
-        }
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(400))
-                dotCount = (dotCount + 1) % 4
+        Text("\(text)\(String(repeating: ".", count: dotCount))")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.white)
+            .frame(width: 100, alignment: .center)
+            .onAppear {
+                task = Task {
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .milliseconds(400))
+                        guard !Task.isCancelled else { return }
+                        dotCount = (dotCount + 1) % 4
+                    }
+                }
             }
-        }
-    }
-}
-
-struct DoneView: View {
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 15))
-                .foregroundStyle(.green)
-                .symbolEffect(.bounce, options: .nonRepeating)
-
-            Text("Copied")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-
-            Text("⌘V")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.4))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
-        }
-    }
-}
-
-struct ErrorView: View {
-    let message: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 13))
-                .foregroundStyle(.orange)
-                .symbolEffect(.pulse.wholeSymbol, options: .repeating)
-
-            Text(message)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white)
-        }
+            .onDisappear {
+                task?.cancel()
+                task = nil
+            }
     }
 }
