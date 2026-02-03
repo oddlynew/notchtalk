@@ -74,6 +74,15 @@ final class AppController {
         HotKeyManager.shared.onToggle = { [weak self] in
             self?.stateManager.toggle()
         }
+        HotKeyManager.shared.onCancel = { [weak self] in
+            guard let self else { return }
+            switch self.stateManager.state {
+            case .recording, .processing:
+                self.stateManager.cancel()
+            default:
+                break
+            }
+        }
 
         checkAndStartHotKey()
         checkMicrophonePermission()
@@ -142,7 +151,7 @@ final class AppController {
     func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notchtalk"
-        alert.informativeText = "Press Right ⌘ to start/stop recording.\nTranscription will be copied to clipboard and optionally pasted."
+        alert.informativeText = "Press Right ⌘ to start/stop recording.\nPress Esc to cancel recording/transcription.\nTranscription will be copied to clipboard and optionally pasted."
         alert.alertStyle = .informational
         alert.runModal()
     }

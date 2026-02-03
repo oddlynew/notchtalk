@@ -11,6 +11,7 @@ final class AudioRecorder: NSObject {
     private var audioRecorder: AVAudioRecorder?
     private var levelTimer: Timer?
     private var recordingURL: URL?
+    private var smoothedLevel: CGFloat = 0
 
     var onAudioLevelUpdate: ((CGFloat) -> Void)?
 
@@ -39,6 +40,7 @@ final class AudioRecorder: NSObject {
         audioRecorder?.prepareToRecord()
         audioRecorder?.record()
 
+        smoothedLevel = 0
         startLevelMonitoring()
 
         return url
@@ -47,6 +49,7 @@ final class AudioRecorder: NSObject {
     func stopRecording() -> URL? {
         stopLevelMonitoring()
         audioRecorder?.stop()
+        smoothedLevel = 0
         let url = recordingURL
         audioRecorder = nil
         return url
@@ -55,6 +58,7 @@ final class AudioRecorder: NSObject {
     func cancelRecording() {
         stopLevelMonitoring()
         audioRecorder?.stop()
+        smoothedLevel = 0
         if let url = recordingURL {
             try? FileManager.default.removeItem(at: url)
         }
@@ -80,16 +84,20 @@ final class AudioRecorder: NSObject {
 
         recorder.updateMeters()
         let averagePower = recorder.averagePower(forChannel: 0)
+        let peakPower = recorder.peakPower(forChannel: 0)
 
         // Convert dB to linear scale (0.0 to 1.0)
-        // Average power typically ranges from -160 (silence) to 0 (max)
-        // We'll use -50 to 0 as our effective range
-        let minDb: Float = -50.0
+        // Average power typically ranges from -160 (silence) to 0 (max).
+        // We combine average/peak and boost low-end response so quiet speech still animates.
+        let effectivePower = max(averagePower, peakPower - 12.0)
+        let minDb: Float = -65.0
         let maxDb: Float = 0.0
-        let normalizedValue = (averagePower - minDb) / (maxDb - minDb)
-        let level = CGFloat(max(0, min(1, normalizedValue)))
+        let normalizedValue = max(0, min(1, (effectivePower - minDb) / (maxDb - minDb)))
+        let boostedLevel = CGFloat(pow(Double(normalizedValue), 0.45))
+        let smoothing: CGFloat = boostedLevel > smoothedLevel ? 0.55 : 0.30
+        smoothedLevel += (boostedLevel - smoothedLevel) * smoothing
 
-        onAudioLevelUpdate?(level)
+        onAudioLevelUpdate?(smoothedLevel)
     }
 
     func deleteRecording(at url: URL) {

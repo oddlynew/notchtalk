@@ -130,34 +130,27 @@ struct AudioVisualizerView: View {
         // For even bar counts, center between the two middle bars (e.g. 3.5 for 0...7).
         let center = CGFloat(barCount - 1) / 2.0
         let distance = abs(CGFloat(index) - center) / center
-        let base = 0.3 + (1.0 - distance) * 0.5
-        let variation = sin(Double(index) * 1.5 + level * 8) * 0.3 + 0.7
-        return max(4, min(14, base * level * variation * 14))
+        let base = 0.35 + (1.0 - distance) * 0.55
+        let responseLevel = CGFloat(pow(Double(level), 0.45))
+        let variation = sin(Double(index) * 1.8 + level * 12) * 0.45 + 0.85
+        let minHeight: CGFloat = 2.0
+        let maxHeight: CGFloat = 20.0
+        let dynamicRange = maxHeight - minHeight
+        let dynamicHeight = base * responseLevel * CGFloat(variation) * dynamicRange * 1.35
+        return minHeight + min(dynamicRange, max(0, dynamicHeight))
     }
 }
 
 struct AnimatedDotsText: View {
     let text: String
-    @State private var dotCount = 0
-    @State private var task: Task<Void, Never>?
 
     var body: some View {
-        Text("\(text)\(String(repeating: ".", count: dotCount))")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.white)
-            .frame(width: 100, alignment: .center)
-            .onAppear {
-                task = Task {
-                    while !Task.isCancelled {
-                        try? await Task.sleep(for: .milliseconds(400))
-                        guard !Task.isCancelled else { return }
-                        dotCount = (dotCount + 1) % 4
-                    }
-                }
-            }
-            .onDisappear {
-                task?.cancel()
-                task = nil
-            }
+        TimelineView(.periodic(from: .now, by: 0.4)) { context in
+            let dotCount = Int(context.date.timeIntervalSinceReferenceDate / 0.4) % 4
+            Text("\(text)\(String(repeating: ".", count: dotCount))")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 100, alignment: .center)
+        }
     }
 }

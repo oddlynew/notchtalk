@@ -17,6 +17,7 @@ final class HotKeyManager: @unchecked Sendable {
     private var _otherKeyPressed = false
 
     var onToggle: (@MainActor () -> Void)?
+    var onCancel: (@MainActor () -> Void)?
 
     private init() {}
 
@@ -77,6 +78,14 @@ final class HotKeyManager: @unchecked Sendable {
         }
 
         if type == .keyDown {
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            if keyCode == 53 {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onCancel?()
+                }
+                return Unmanaged.passUnretained(event)
+            }
+
             lock.lock()
             _otherKeyPressed = true
             lock.unlock()
