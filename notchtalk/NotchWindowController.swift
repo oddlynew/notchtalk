@@ -9,13 +9,28 @@ import SwiftUI
 @MainActor
 final class NotchWindowController {
     private var panel: NSPanel?
+    private var screenParametersObserver: NSObjectProtocol?
     private let stateManager: NotchStateManager
+#if DEBUG
+    private(set) var screenParametersNotificationCountForTesting = 0
+#endif
 
     init(stateManager: NotchStateManager) {
         self.stateManager = stateManager
     }
 
+    deinit {
+        if let screenParametersObserver {
+            NotificationCenter.default.removeObserver(screenParametersObserver)
+        }
+    }
+
     func setup() {
+        guard panel == nil else {
+            updatePosition()
+            return
+        }
+
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 300, height: 60),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -40,12 +55,15 @@ final class NotchWindowController {
 
         self.panel = panel
 
-        NotificationCenter.default.addObserver(
+        screenParametersObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
+#if DEBUG
+                self?.screenParametersNotificationCountForTesting += 1
+#endif
                 self?.updatePosition()
             }
         }
@@ -96,3 +114,15 @@ final class NotchWindowController {
         return (leftArea.maxX + rightArea.minX) / 2
     }
 }
+
+#if DEBUG
+extension NotchWindowController {
+    var panelIdentifierForTesting: ObjectIdentifier? {
+        panel.map(ObjectIdentifier.init)
+    }
+
+    var hasScreenParametersObserverForTesting: Bool {
+        screenParametersObserver != nil
+    }
+}
+#endif

@@ -34,17 +34,18 @@ actor OpenAITranscriptionService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        let audioData = try Data(contentsOf: audioURL)
-        let body = createMultipartBody(
-            audioData: audioData,
+        let bodyURL = try createMultipartBodyFile(
+            audioURL: audioURL,
             filename: audioURL.lastPathComponent,
             model: model,
             prompt: prompt,
             boundary: boundary
         )
-        request.httpBody = body
+        defer {
+            try? FileManager.default.removeItem(at: bodyURL)
+        }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: bodyURL)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TranscriptionError.invalidResponse
@@ -61,50 +62,90 @@ actor OpenAITranscriptionService {
         return result.text
     }
 
-    private func createMultipartBody(
-        audioData: Data,
+    private func createMultipartBodyFile(
+        audioURL: URL,
         filename: String,
         model: String,
         prompt: String?,
         boundary: String
-    ) -> Data {
-        var body = Data()
+    ) throws -> URL {
+        let fileManager = FileManager.default
+        let bodyURL = fileManager.temporaryDirectory.appendingPathComponent("notchtalk_multipart_\(UUID().uuidString).tmp")
+        fileManager.createFile(atPath: bodyURL.path, contents: nil)
 
-        // Model field
-        body.appendString("--\(boundary)\r\n")
-        body.appendString("Content-Disposition: form-data; name=\"model\"\r\n\r\n")
-        body.appendString("\(model)\r\n")
+        let outputHandle = try FileHandle(forWritingTo: bodyURL)
 
-        // Response format
-        body.appendString("--\(boundary)\r\n")
-        body.appendString("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n")
-        body.appendString("json\r\n")
+        do {
+            outputHandle.writeString("--\(boundary)\r\n")
+            outputHandle.writeString("Content-Disposition: form-data; name=\"model\"\r\n\r\n")
+            outputHandle.writeString("\(model)\r\n")
 
-        // Optional prompt
-        if let prompt = prompt, !prompt.isEmpty {
-            body.appendString("--\(boundary)\r\n")
-            body.appendString("Content-Disposition: form-data; name=\"prompt\"\r\n\r\n")
-            body.appendString("\(prompt)\r\n")
+            outputHandle.writeString("--\(boundary)\r\n")
+            outputHandle.writeString("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n")
+            outputHandle.writeString("json\r\n")
+
+            if let prompt = prompt, !prompt.isEmpty {
+                outputHandle.writeString("--\(boundary)\r\n")
+                outputHandle.writeString("Content-Disposition: form-data; name=\"prompt\"\r\n\r\n")
+                outputHandle.writeString("\(prompt)\r\n")
+            }
+
+            outputHandle.writeString("--\(boundary)\r\n")
+            outputHandle.writeString("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
+            outputHandle.writeString("Content-Type: audio/m4a\r\n\r\n")
+            try appendFile(at: audioURL, to: outputHandle)
+            outputHandle.writeString("\r\n")
+            outputHandle.writeString("--\(boundary)--\r\n")
+            try outputHandle.close()
+            return bodyURL
+        } catch {
+            try? outputHandle.close()
+            try? fileManager.removeItem(at: bodyURL)
+            throw error
+        }
+    }
+
+    private func appendFile(at fileURL: URL, to outputHandle: FileHandle) throws {
+        let inputHandle = try FileHandle(forReadingFrom: fileURL)
+        defer {
+            try? inputHandle.close()
         }
 
-        // Audio file
-        body.appendString("--\(boundary)\r\n")
-        body.appendString("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
-        body.appendString("Content-Type: audio/m4a\r\n\r\n")
-        body.append(audioData)
-        body.appendString("\r\n")
-
-        // End boundary
-        body.appendString("--\(boundary)--\r\n")
-
-        return body
+        let chunkSize = 64 * 1024
+        while true {
+            let chunk = try inputHandle.read(upToCount: chunkSize) ?? Data()
+            if chunk.isEmpty {
+                break
+            }
+            outputHandle.write(chunk)
+        }
     }
 }
 
-extension Data {
-    fileprivate nonisolated mutating func appendString(_ string: String) {
+#if DEBUG
+extension OpenAITranscriptionService {
+    func createMultipartBodyFileForTesting(
+        audioURL: URL,
+        filename: String,
+        model: String,
+        prompt: String?,
+        boundary: String
+    ) throws -> URL {
+        try createMultipartBodyFile(
+            audioURL: audioURL,
+            filename: filename,
+            model: model,
+            prompt: prompt,
+            boundary: boundary
+        )
+    }
+}
+#endif
+
+extension FileHandle {
+    fileprivate nonisolated func writeString(_ string: String) {
         if let data = string.data(using: .utf8) {
-            append(data)
+            write(data)
         }
     }
 }

@@ -28,6 +28,10 @@ final class HotKeyManager: @unchecked Sendable {
             return
         }
 
+        guard eventTap == nil else {
+            return
+        }
+
         let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
 
         guard let tap = CGEvent.tapCreate(
