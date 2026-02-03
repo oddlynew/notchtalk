@@ -65,7 +65,7 @@ struct NotchView: View {
                     .controlSize(.small)
                     .tint(.white)
 
-                AnimatedDotsText(text: "Transcribing")
+                AnimatedDotsText(text: stateManager.processingStatusText)
             }
 
         case .done:
@@ -150,7 +150,7 @@ struct AnimatedDotsText: View {
             Text("\(text)\(String(repeating: ".", count: dotCount))")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.white)
-                .frame(width: 100, alignment: .center)
+                .frame(width: 150, alignment: .center)
         }
     }
 }

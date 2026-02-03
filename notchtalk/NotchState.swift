@@ -19,6 +19,15 @@ final class NotchStateManager {
     var state: AppState = .idle
     var audioLevel: CGFloat = 0.0
     var recordingDuration: TimeInterval = 0
+    var retryAttempt: Int?
+    var totalRetries = 0
+
+    var processingStatusText: String {
+        if let retryAttempt, totalRetries > 0 {
+            return "Retrying (\(retryAttempt)/\(totalRetries))"
+        }
+        return "Transcribing"
+    }
 
     private var recordingTask: Task<Void, Never>?
     private var processingTask: Task<Void, Never>?
@@ -90,6 +99,8 @@ final class NotchStateManager {
 
         currentRecordingURL = recordingURL
         state = .processing
+        retryAttempt = nil
+        totalRetries = 0
         SoundManager.shared.playStopSound()
 
         processingTask = Task {
@@ -100,7 +111,11 @@ final class NotchStateManager {
 
                 let transcription = try await transcriptionService.transcribe(
                     audioURL: recordingURL,
-                    prompt: prompt
+                    prompt: prompt,
+                    onRetry: { [weak self] attempt, totalRetries in
+                        self?.retryAttempt = attempt
+                        self?.totalRetries = totalRetries
+                    }
                 )
 
                 guard !Task.isCancelled else { return }
@@ -129,6 +144,8 @@ final class NotchStateManager {
                     switch transcriptionError {
                     case .noAPIKey:
                         errorMessage = "No API key"
+                    case .timeout:
+                        errorMessage = "Timed out"
                     case .apiError(let message):
                         // Truncate long error messages
                         errorMessage = String(message.prefix(20))
@@ -168,6 +185,8 @@ final class NotchStateManager {
         state = .idle
         audioLevel = 0
         recordingDuration = 0
+        retryAttempt = nil
+        totalRetries = 0
         currentRecordingURL = nil
     }
 
