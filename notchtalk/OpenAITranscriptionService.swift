@@ -9,6 +9,7 @@ actor OpenAITranscriptionService {
     typealias UploadFunction = @Sendable (_ request: URLRequest, _ bodyURL: URL) async throws -> (Data, URLResponse)
     typealias APIKeyProvider = @Sendable () -> String?
     typealias RetryHandler = @MainActor @Sendable (_ retryAttempt: Int, _ totalRetries: Int) async -> Void
+    typealias LogHandler = @MainActor @Sendable (_ message: String, _ level: TranscriptionDiagnosticsEntry.LogLevel) async -> Void
 
     private let endpoint = URL(string: "https://api.openai.com/v1/audio/transcriptions")!
     private let model = "gpt-4o-transcribe"
@@ -49,7 +50,8 @@ actor OpenAITranscriptionService {
     func transcribe(
         audioURL: URL,
         prompt: String?,
-        onRetry: RetryHandler? = nil
+        onRetry: RetryHandler? = nil,
+        onLog: LogHandler? = nil
     ) async throws -> String {
         guard let apiKey = apiKeyProvider() else {
             throw TranscriptionError.noAPIKey
@@ -75,14 +77,18 @@ actor OpenAITranscriptionService {
 
         for attempt in 0...maxTimeoutRetries {
             do {
+                await onLog?("Sending request to OpenAI transcription API", .info)
                 let (data, response) = try await upload(request, bodyURL)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw TranscriptionError.invalidResponse
                 }
 
+                await onLog?("Received HTTP \(httpResponse.statusCode)", .info)
+
                 if httpResponse.statusCode != 200 {
                     if shouldRetryForTimeout(statusCode: httpResponse.statusCode) {
+                        await onLog?("Timeout status code \(httpResponse.statusCode)", .warning)
                         if attempt < maxTimeoutRetries {
                             await onRetry?(attempt + 1, maxTimeoutRetries)
                             try await Task.sleep(for: retryDelay)
@@ -100,6 +106,7 @@ actor OpenAITranscriptionService {
                 let result = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
                 return result.text
             } catch {
+                await onLog?("Request failed with error: \(error.localizedDescription)", .error)
                 if shouldRetryForTimeout(error: error), attempt < maxTimeoutRetries {
                     await onRetry?(attempt + 1, maxTimeoutRetries)
                     try await Task.sleep(for: retryDelay)

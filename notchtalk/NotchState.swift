@@ -33,7 +33,9 @@ final class NotchStateManager {
     private var processingTask: Task<Void, Never>?
     private let audioRecorder = AudioRecorder()
     private let transcriptionService = OpenAITranscriptionService()
+    private let diagnosticsStore = TranscriptionDiagnosticsStore.shared
     private var currentRecordingURL: URL?
+    private var activeDiagnosticsID: UUID?
 
     init() {
         audioRecorder.onAudioLevelUpdate = { [weak self] level in
@@ -103,22 +105,31 @@ final class NotchStateManager {
         totalRetries = 0
         SoundManager.shared.playStopSound()
 
+        let prompt = SettingsManager.shared.transcriptionPrompt.isEmpty
+            ? nil
+            : SettingsManager.shared.transcriptionPrompt
+        let diagnosticsID = diagnosticsStore.startTranscription(audioURL: recordingURL, prompt: prompt)
+        activeDiagnosticsID = diagnosticsID
+        diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
+
         processingTask = Task {
             do {
-                let prompt = SettingsManager.shared.transcriptionPrompt.isEmpty
-                    ? nil
-                    : SettingsManager.shared.transcriptionPrompt
-
                 let transcription = try await transcriptionService.transcribe(
                     audioURL: recordingURL,
                     prompt: prompt,
                     onRetry: { [weak self] attempt, totalRetries in
                         self?.retryAttempt = attempt
                         self?.totalRetries = totalRetries
+                        self?.diagnosticsStore.registerRetry(attempt: attempt, total: totalRetries, for: diagnosticsID)
+                    },
+                    onLog: { [weak self] message, level in
+                        self?.diagnosticsStore.log(message, level: level, for: diagnosticsID)
                     }
                 )
 
                 guard !Task.isCancelled else { return }
+
+                diagnosticsStore.markSucceeded(for: diagnosticsID, outputCharacterCount: transcription.count)
 
                 // Copy to clipboard and optionally paste
                 if SettingsManager.shared.autoPasteEnabled {
@@ -131,6 +142,7 @@ final class NotchStateManager {
 
                 // Clean up the recording file
                 audioRecorder.deleteRecording(at: recordingURL)
+                activeDiagnosticsID = nil
 
                 try? await Task.sleep(for: .seconds(1.2))
 
@@ -156,6 +168,8 @@ final class NotchStateManager {
                     errorMessage = "Failed"
                 }
 
+                diagnosticsStore.markFailed(for: diagnosticsID, message: error.localizedDescription)
+
                 state = .error(errorMessage)
                 SoundManager.shared.playErrorSound()
 
@@ -163,6 +177,8 @@ final class NotchStateManager {
                 if let url = currentRecordingURL {
                     audioRecorder.deleteRecording(at: url)
                 }
+
+                activeDiagnosticsID = nil
 
                 try? await Task.sleep(for: .seconds(3))
 
@@ -173,6 +189,11 @@ final class NotchStateManager {
     }
 
     func cancel() {
+        if let activeDiagnosticsID {
+            diagnosticsStore.markCancelled(for: activeDiagnosticsID, reason: "Cancelled by user")
+            self.activeDiagnosticsID = nil
+        }
+
         recordingTask?.cancel()
         recordingTask = nil
         processingTask?.cancel()
