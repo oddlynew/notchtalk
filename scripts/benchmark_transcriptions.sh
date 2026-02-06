@@ -60,12 +60,22 @@ if [[ -z "${OPENAI_API_KEY:-}" ]]; then
   exit 1
 fi
 
-for cmd in say afconvert curl jq python3; do
+for cmd in say afconvert curl jq; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Missing dependency: $cmd" >&2
     exit 1
   fi
 done
+
+# Prefer the system Python for compatibility; Homebrew Python can be blocked by system policy in some environments.
+if [[ -x /usr/bin/python3 ]]; then
+  PYTHON_BIN="/usr/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="$(command -v python3)"
+else
+  echo "Missing dependency: python3" >&2
+  exit 1
+fi
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -85,26 +95,21 @@ echo "Benchmarking model=$MODEL runs=$RUNS max_time=${MAX_TIME}s"
 echo "Audio sample: $M4A_FILE"
 
 for run in $(seq 1 "$RUNS"); do
-  response="$TMP_DIR/resp_${run}.txt"
+  body_file="$TMP_DIR/body_${run}.json"
+  err_file="$TMP_DIR/err_${run}.txt"
   status=0
 
-  if curl -sS --max-time "$MAX_TIME" \
-      -w "\nHTTP_STATUS:%{http_code}\nTOTAL:%{time_total}\n" \
-      -o "$response" \
+  meta="$(curl -sS --max-time "$MAX_TIME" \
+      -w '%{http_code} %{time_total}' \
+      -o "$body_file" \
       -X POST "https://api.openai.com/v1/audio/transcriptions" \
       -H "Authorization: Bearer ${OPENAI_API_KEY}" \
       -F "model=${MODEL}" \
       -F "response_format=json" \
-      -F "file=@${M4A_FILE}"; then
-    status=0
-  else
-    status=$?
-  fi
+      -F "file=@${M4A_FILE}" 2>"$err_file")" || status=$?
 
-  http_code="$(awk -F: '/^HTTP_STATUS:/{print $2}' "$response" | tail -n1)"
-  time_total="$(awk -F: '/^TOTAL:/{print $2}' "$response" | tail -n1)"
-  body_file="$TMP_DIR/body_${run}.json"
-  sed '/^HTTP_STATUS:/,$d' "$response" > "$body_file"
+  http_code="$(echo "${meta:-}" | awk '{print $1}')"
+  time_total="$(echo "${meta:-}" | awk '{print $2}')"
 
   ok=false
   text_len=0
@@ -114,7 +119,9 @@ for run in $(seq 1 "$RUNS"); do
     ok=true
     text_len="$(jq -r '.text // ""' "$body_file" | wc -m | tr -d ' ')"
   else
-    if jq -e . >/dev/null 2>&1 < "$body_file"; then
+    if [[ "$status" -ne 0 && -s "$err_file" ]]; then
+      error_message="$(tr '\n' ' ' < "$err_file" | sed 's/\"/\"\"/g')"
+    elif jq -e . >/dev/null 2>&1 < "$body_file"; then
       error_message="$(jq -r '.error.message // .message // .error // "request_failed"' "$body_file" | tr '\n' ' ')"
     else
       error_message="curl_exit_${status}"
@@ -127,7 +134,7 @@ for run in $(seq 1 "$RUNS"); do
   echo "[$run/$RUNS] http=${http_code:-0} curl_status=$status time=${time_total:-0}s ok=$ok"
 done
 
-python3 - "$RESULTS_CSV" <<'PY'
+"$PYTHON_BIN" - "$RESULTS_CSV" <<'PY'
 import csv
 import statistics
 import sys

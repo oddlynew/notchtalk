@@ -6,7 +6,7 @@
 import Foundation
 
 actor OpenAITranscriptionService {
-    typealias UploadFunction = @Sendable (_ request: URLRequest, _ bodyURL: URL) async throws -> (Data, URLResponse)
+    typealias UploadFunction = @Sendable (_ request: URLRequest, _ bodyURL: URL, _ delegate: URLSessionTaskDelegate?) async throws -> (Data, URLResponse)
     typealias APIKeyProvider = @Sendable () -> String?
     typealias RetryHandler = @MainActor @Sendable (_ retryAttempt: Int, _ totalRetries: Int) async -> Void
     typealias LogHandler = @MainActor @Sendable (_ message: String, _ level: TranscriptionDiagnosticsEntry.LogLevel) async -> Void
@@ -20,14 +20,15 @@ actor OpenAITranscriptionService {
     private let retryDelay: Duration
     private let upload: UploadFunction
     private let apiKeyProvider: APIKeyProvider
+    private var inFlightNetworkRequests = 0
 
     init(
         maxTimeoutRetries: Int = 3,
         retryDelay: Duration = .milliseconds(500),
         fallbackModel: String? = nil,
         apiKeyProvider: @escaping APIKeyProvider = { KeychainService.getAPIKey() },
-        upload: @escaping UploadFunction = { request, bodyURL in
-            try await URLSession.shared.upload(for: request, fromFile: bodyURL)
+        upload: @escaping UploadFunction = { request, bodyURL, delegate in
+            try await URLSession.shared.upload(for: request, fromFile: bodyURL, delegate: delegate)
         }
     ) {
         self.maxTimeoutRetries = max(0, maxTimeoutRetries)
@@ -56,6 +57,33 @@ actor OpenAITranscriptionService {
         }
     }
 
+    private final class TaskMetricsCollector: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _metrics: URLSessionTaskMetrics?
+
+        var metrics: URLSessionTaskMetrics? {
+            lock.lock()
+            defer { lock.unlock() }
+            return _metrics
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+            lock.lock()
+            _metrics = metrics
+            lock.unlock()
+        }
+    }
+
+    private func incrementInFlightRequests() -> Int {
+        inFlightNetworkRequests += 1
+        return inFlightNetworkRequests
+    }
+
+    private func decrementInFlightRequests() -> Int {
+        inFlightNetworkRequests = max(0, inFlightNetworkRequests - 1)
+        return inFlightNetworkRequests
+    }
+
     func transcribe(
         audioURL: URL,
         prompt: String?,
@@ -73,11 +101,14 @@ actor OpenAITranscriptionService {
                 ?? estimateAudioDurationFromFileSize(audioURL: audioURL)
                 ?? 20
         )
-        let baseAttemptTimeout = timeoutBudget(forAudioDuration: estimatedAudioDuration)
+        let baseHedgeDelay = hedgeDelay(forAudioDuration: estimatedAudioDuration)
         await onLog?(
-            "Estimated audio duration \(Int(round(estimatedAudioDuration)))s; first-attempt timeout \(Int(round(baseAttemptTimeout)))s",
+            "Estimated audio duration \(Int(round(estimatedAudioDuration)))s; hedge-after \(Int(round(baseHedgeDelay)))s",
             .info
         )
+        if let fallbackModel {
+            await onLog?("Fallback model configured: \(fallbackModel)", .info)
+        }
 
         let primaryBoundary = UUID().uuidString
         let requestTemplate = makeRequestTemplate(apiKey: apiKey, boundary: primaryBoundary)
@@ -102,33 +133,31 @@ actor OpenAITranscriptionService {
             }
         }
 
-        var shouldRaceFallback = false
-
+        let totalAttempts = maxTimeoutRetries + 1
         for attempt in 0...maxTimeoutRetries {
             do {
-                let attemptTimeout = timeoutBudgetForAttempt(
+                let hedgeAfter = hedgeDelayForAttempt(
                     attempt: attempt,
-                    baseAttemptTimeout: baseAttemptTimeout
+                    baseHedgeDelay: baseHedgeDelay
+                )
+                let attemptDeadline = attemptDeadlineForAttempt(
+                    attempt: attempt,
+                    baseHedgeDelay: baseHedgeDelay
                 )
                 await onLog?(
-                    "Attempt \(attempt + 1)/\(maxTimeoutRetries + 1): force-timeout after \(Int(round(attemptTimeout)))s",
+                    "Attempt \(attempt + 1)/\(totalAttempts): hedge fallback after \(Int(round(hedgeAfter)))s; attempt-timeout after \(Int(round(attemptDeadline)))s",
                     .info
                 )
 
-                let text: String
-                if shouldRaceFallback, let fallbackBodyContext {
-                    await onLog?(
-                        "Primary timed out previously; racing \(model) vs \(fallbackBodyContext.model)",
-                        .warning
-                    )
-                    let raceResult = try await transcribeInParallelRace(
+                let raceResult: RaceResult
+                if let fallbackBodyContext {
+                    raceResult = try await transcribeWithFallbackHedge(
                         primaryRequestTemplate: requestTemplate,
                         primaryBodyURL: bodyURL,
                         primaryModel: model,
-                        fallbackRequestTemplate: fallbackBodyContext.requestTemplate,
-                        fallbackBodyURL: fallbackBodyContext.bodyURL,
-                        fallbackModel: fallbackBodyContext.model,
-                        timeoutSeconds: attemptTimeout,
+                        fallbackBodyContext: fallbackBodyContext,
+                        hedgeAfter: hedgeAfter,
+                        attemptDeadline: attemptDeadline,
                         onLog: onLog
                     )
                     if raceResult.model != model {
@@ -137,22 +166,21 @@ actor OpenAITranscriptionService {
                             .warning
                         )
                     }
-                    text = raceResult.text
                 } else {
-                    text = try await transcribeSingleModel(
+                    let text = try await transcribeWithAttemptDeadline(
                         requestTemplate: requestTemplate,
                         bodyURL: bodyURL,
                         modelName: model,
-                        timeoutSeconds: attemptTimeout,
+                        attemptDeadline: attemptDeadline,
                         onLog: onLog
                     )
+                    raceResult = RaceResult(model: model, text: text)
                 }
 
-                return text
+                return raceResult.text
             } catch {
                 await onLog?("Request failed with error: \(error.localizedDescription)", .error)
                 if shouldRetryForTimeout(error: error), attempt < maxTimeoutRetries {
-                    shouldRaceFallback = true
                     await onRetry?(attempt + 1, maxTimeoutRetries)
                     try await Task.sleep(for: retryDelay)
                     continue
@@ -178,6 +206,102 @@ actor OpenAITranscriptionService {
     private struct RaceResult {
         let model: String
         let text: String
+    }
+
+    private enum HedgeControlError: Error {
+        case fallbackGraceElapsed
+    }
+
+    private struct AttemptTaggedError: Error {
+        enum Kind: String {
+            case primary
+            case fallback
+            case attemptDeadline
+            case fallbackGrace
+        }
+
+        let kind: Kind
+        let model: String?
+        let underlying: Error
+    }
+
+    private func makeRequestID(prefix: String) -> String {
+        let token = UUID().uuidString.split(separator: "-").first.map(String.init) ?? UUID().uuidString
+        return "\(prefix)-\(token)"
+    }
+
+    private func formatSeconds(_ seconds: TimeInterval) -> String {
+        String(format: "%.3f", seconds)
+    }
+
+    private func diffMilliseconds(_ start: Date?, _ end: Date?) -> String? {
+        guard let start, let end else {
+            return nil
+        }
+        let ms = max(0, end.timeIntervalSince(start) * 1000)
+        return "\(Int(round(ms)))ms"
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        if bytes < 0 {
+            return "\(bytes)B"
+        }
+        if bytes < 1_024 {
+            return "\(bytes)B"
+        }
+        if bytes < 1_024 * 1_024 {
+            return String(format: "%.1fKB", Double(bytes) / 1_024)
+        }
+        return String(format: "%.1fMB", Double(bytes) / (1_024 * 1_024))
+    }
+
+    private func logMetrics(
+        _ metrics: URLSessionTaskMetrics,
+        requestID: String,
+        modelName: String,
+        onLog: LogHandler?
+    ) async {
+        await onLog?(
+            "[\(requestID)] Metrics (\(modelName)): total=\(formatSeconds(metrics.taskInterval.duration))s redirects=\(metrics.redirectCount) tx=\(metrics.transactionMetrics.count)",
+            .info
+        )
+
+        for (index, tx) in metrics.transactionMetrics.enumerated() {
+            var parts: [String] = []
+
+            if let proto = tx.networkProtocolName {
+                parts.append("proto=\(proto)")
+            }
+            parts.append("reused=\(tx.isReusedConnection)")
+            parts.append("proxy=\(tx.isProxyConnection)")
+            parts.append("fetch=\(tx.resourceFetchType)")
+
+            if let dns = diffMilliseconds(tx.domainLookupStartDate, tx.domainLookupEndDate) {
+                parts.append("dns=\(dns)")
+            }
+            if let connect = diffMilliseconds(tx.connectStartDate, tx.connectEndDate) {
+                parts.append("connect=\(connect)")
+            }
+            if let tls = diffMilliseconds(tx.secureConnectionStartDate, tx.secureConnectionEndDate) {
+                parts.append("tls=\(tls)")
+            }
+            if let request = diffMilliseconds(tx.requestStartDate, tx.requestEndDate) {
+                parts.append("request=\(request)")
+            }
+
+            // "TTFB" here is "time from requestStartDate to responseStartDate" (includes upload+server queue).
+            if let ttfb = diffMilliseconds(tx.requestStartDate, tx.responseStartDate) {
+                parts.append("ttfb=\(ttfb)")
+            }
+            if let response = diffMilliseconds(tx.responseStartDate, tx.responseEndDate) {
+                parts.append("response=\(response)")
+            }
+
+            parts.append("sent=\(formatBytes(tx.countOfRequestBodyBytesSent))")
+            parts.append("recv=\(formatBytes(tx.countOfResponseBodyBytesReceived))")
+
+            await onLog?("[\(requestID)] Tx\(index) " + parts.joined(separator: " "), .info)
+        }
     }
 
     private func makeRequestTemplate(apiKey: String, boundary: String) -> URLRequest {
@@ -215,32 +339,305 @@ actor OpenAITranscriptionService {
         )
     }
 
+    private func transcribeWithAttemptDeadline(
+        requestTemplate: URLRequest,
+        bodyURL: URL,
+        modelName: String,
+        attemptDeadline: TimeInterval,
+        onLog: LogHandler? = nil
+    ) async throws -> String {
+        let requestID = makeRequestID(prefix: "P")
+        let requestTimeoutSeconds = min(requestTimeoutCeiling, attemptDeadline + 10)
+
+        let outcome = await withTaskGroup(
+            of: Result<String, Error>.self,
+            returning: Result<String, Error>.self
+        ) { group in
+            group.addTask {
+                do {
+                    let text = try await self.transcribeSingleModel(
+                        requestTemplate: requestTemplate,
+                        bodyURL: bodyURL,
+                        modelName: modelName,
+                        requestTimeoutSeconds: requestTimeoutSeconds,
+                        requestID: requestID,
+                        onLog: onLog
+                    )
+                    return .success(text)
+                } catch {
+                    return .failure(AttemptTaggedError(kind: .primary, model: modelName, underlying: error))
+                }
+            }
+
+            group.addTask {
+                do {
+                    try await Task.sleep(for: .seconds(attemptDeadline))
+                    await onLog?(
+                        "[\(requestID)] Attempt deadline reached after \(Int(round(attemptDeadline)))s (\(modelName))",
+                        .warning
+                    )
+                    return .failure(AttemptTaggedError(kind: .attemptDeadline, model: modelName, underlying: TranscriptionError.timeout))
+                } catch {
+                    return .failure(AttemptTaggedError(kind: .attemptDeadline, model: modelName, underlying: error))
+                }
+            }
+
+            while let result = await group.next() {
+                switch result {
+                case .success(let text):
+                    group.cancelAll()
+                    return .success(text)
+                case .failure(let error):
+                    group.cancelAll()
+                    if let tagged = error as? AttemptTaggedError {
+                        return .failure(tagged.underlying)
+                    }
+                    return .failure(error)
+                }
+            }
+
+            return .failure(URLError(.unknown))
+        }
+
+        return try outcome.get()
+    }
+
+    private func transcribeWithFallbackHedge(
+        primaryRequestTemplate: URLRequest,
+        primaryBodyURL: URL,
+        primaryModel: String,
+        fallbackBodyContext: BodyContext,
+        hedgeAfter: TimeInterval,
+        attemptDeadline: TimeInterval,
+        onLog: LogHandler? = nil
+    ) async throws -> RaceResult {
+        let fallbackGraceSeconds: TimeInterval = 2
+        let primaryRequestID = makeRequestID(prefix: "P")
+        let fallbackRequestID = makeRequestID(prefix: "F")
+        let requestTimeoutSeconds = min(requestTimeoutCeiling, attemptDeadline + 10)
+
+        let outcome = await withTaskGroup(
+            of: Result<RaceResult, Error>.self,
+            returning: Result<RaceResult, Error>.self
+        ) { group in
+            group.addTask {
+                do {
+                    let text = try await self.transcribeSingleModel(
+                        requestTemplate: primaryRequestTemplate,
+                        bodyURL: primaryBodyURL,
+                        modelName: primaryModel,
+                        requestTimeoutSeconds: requestTimeoutSeconds,
+                        requestID: primaryRequestID,
+                        onLog: onLog
+                    )
+                    return .success(RaceResult(model: primaryModel, text: text))
+                } catch {
+                    return .failure(AttemptTaggedError(kind: .primary, model: primaryModel, underlying: error))
+                }
+            }
+
+            group.addTask {
+                do {
+                    if hedgeAfter > 0 {
+                        try await Task.sleep(for: .seconds(hedgeAfter))
+                    }
+                    await onLog?(
+                        "[\(fallbackRequestID)] Hedge starting fallback request (\(fallbackBodyContext.model)) after \(Int(round(hedgeAfter)))s",
+                        .warning
+                    )
+                    let text = try await self.transcribeSingleModel(
+                        requestTemplate: fallbackBodyContext.requestTemplate,
+                        bodyURL: fallbackBodyContext.bodyURL,
+                        modelName: fallbackBodyContext.model,
+                        requestTimeoutSeconds: requestTimeoutSeconds,
+                        requestID: fallbackRequestID,
+                        onLog: onLog
+                    )
+                    return .success(RaceResult(model: fallbackBodyContext.model, text: text))
+                } catch {
+                    return .failure(AttemptTaggedError(kind: .fallback, model: fallbackBodyContext.model, underlying: error))
+                }
+            }
+
+            group.addTask {
+                do {
+                    try await Task.sleep(for: .seconds(attemptDeadline))
+                    await onLog?(
+                        "[\(primaryRequestID)] Attempt deadline reached after \(Int(round(attemptDeadline)))s (primary=\(primaryModel))",
+                        .warning
+                    )
+                    return .failure(AttemptTaggedError(kind: .attemptDeadline, model: primaryModel, underlying: TranscriptionError.timeout))
+                } catch {
+                    return .failure(AttemptTaggedError(kind: .attemptDeadline, model: primaryModel, underlying: error))
+                }
+            }
+
+            var fallbackResult: RaceResult?
+            var primaryFinished = false
+            var fallbackFinished = false
+            var graceTimerAdded = false
+            var primaryError: Error?
+            var fallbackError: Error?
+            var lastError: Error?
+
+            while let result = await group.next() {
+                switch result {
+                case .success(let raceResult):
+                    if raceResult.model == primaryModel {
+                        group.cancelAll()
+                        return .success(raceResult)
+                    }
+
+                    if fallbackResult == nil {
+                        fallbackResult = raceResult
+                        if !graceTimerAdded {
+                            graceTimerAdded = true
+                            await onLog?(
+                                "[\(fallbackRequestID)] Fallback returned before primary; waiting up to \(Int(round(fallbackGraceSeconds)))s for primary",
+                                .warning
+                            )
+                            group.addTask {
+                                do {
+                                    try await Task.sleep(for: .seconds(fallbackGraceSeconds))
+                                    return .failure(
+                                        AttemptTaggedError(
+                                            kind: .fallbackGrace,
+                                            model: nil,
+                                            underlying: HedgeControlError.fallbackGraceElapsed
+                                        )
+                                    )
+                                } catch {
+                                    return .failure(AttemptTaggedError(kind: .fallbackGrace, model: nil, underlying: error))
+                                }
+                            }
+                        }
+                    }
+                    fallbackFinished = true
+
+                case .failure(let error):
+                    let tagged = error as? AttemptTaggedError
+                    let kind = tagged?.kind
+                    let underlying = tagged?.underlying ?? error
+                    lastError = underlying
+
+                    switch kind {
+                    case .primary:
+                        primaryFinished = true
+                        primaryError = underlying
+
+                        if let fallbackResult {
+                            group.cancelAll()
+                            return .success(fallbackResult)
+                        }
+
+                        // Fail fast for obvious local connectivity issues (fallback won't help).
+                        if isLikelyLocalConnectivityError(underlying) {
+                            group.cancelAll()
+                            return .failure(underlying)
+                        }
+
+                    case .fallback:
+                        fallbackFinished = true
+                        fallbackError = underlying
+
+                    case .fallbackGrace:
+                        if let fallbackResult {
+                            group.cancelAll()
+                            return .success(fallbackResult)
+                        }
+
+                    case .attemptDeadline:
+                        if let fallbackResult {
+                            group.cancelAll()
+                            return .success(fallbackResult)
+                        }
+                        group.cancelAll()
+                        return .failure(TranscriptionError.timeout)
+
+                    case .none:
+                        break
+                    }
+
+                    if primaryFinished, fallbackFinished {
+                        group.cancelAll()
+                        if let fallbackResult {
+                            return .success(fallbackResult)
+                        }
+
+                        let sawTimeout = [primaryError, fallbackError].compactMap { $0 }.contains(where: shouldRetryForTimeout)
+                        if sawTimeout {
+                            return .failure(TranscriptionError.timeout)
+                        }
+
+                        return .failure(primaryError ?? fallbackError ?? underlying)
+                    }
+                }
+            }
+
+            if let fallbackResult {
+                return .success(fallbackResult)
+            }
+            return .failure(lastError ?? URLError(.unknown))
+        }
+
+        return try outcome.get()
+    }
+
     private func transcribeSingleModel(
         requestTemplate: URLRequest,
         bodyURL: URL,
         modelName: String,
-        timeoutSeconds: TimeInterval,
+        requestTimeoutSeconds: TimeInterval,
+        requestID: String,
         onLog: LogHandler? = nil
     ) async throws -> String {
         var request = requestTemplate
-        request.timeoutInterval = min(requestTimeoutCeiling, timeoutSeconds + 5)
+        request.timeoutInterval = min(requestTimeoutCeiling, requestTimeoutSeconds)
 
-        await onLog?("Sending request to OpenAI transcription API (\(modelName))", .info)
-        let (data, response) = try await uploadWithForcedTimeout(
-            request: request,
-            bodyURL: bodyURL,
-            timeoutSeconds: timeoutSeconds
+        let metricsCollector = TaskMetricsCollector()
+        let inFlightAtStart = incrementInFlightRequests()
+        let startTime = Date()
+
+        await onLog?(
+            "[\(requestID)] Sending request to OpenAI transcription API (\(modelName)); inFlight=\(inFlightAtStart); url_timeout=\(Int(round(request.timeoutInterval)))s",
+            .info
         )
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await upload(request, bodyURL, metricsCollector)
+        } catch {
+            let elapsed = Date().timeIntervalSince(startTime)
+            let inFlightAfter = decrementInFlightRequests()
+            await onLog?(
+                "[\(requestID)] Request failed after \(formatSeconds(elapsed))s; inFlight=\(inFlightAfter); error=\(error.localizedDescription)",
+                .error
+            )
+            if let metrics = metricsCollector.metrics {
+                await logMetrics(metrics, requestID: requestID, modelName: modelName, onLog: onLog)
+            }
+            throw error
+        }
+
+        let elapsed = Date().timeIntervalSince(startTime)
+        let inFlightAfter = decrementInFlightRequests()
+        await onLog?(
+            "[\(requestID)] Upload completed in \(formatSeconds(elapsed))s; inFlight=\(inFlightAfter)",
+            .info
+        )
+        if let metrics = metricsCollector.metrics {
+            await logMetrics(metrics, requestID: requestID, modelName: modelName, onLog: onLog)
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw TranscriptionError.invalidResponse
         }
 
-        await onLog?("Received HTTP \(httpResponse.statusCode) (\(modelName))", .info)
+        await onLog?("[\(requestID)] Received HTTP \(httpResponse.statusCode) (\(modelName))", .info)
 
         if httpResponse.statusCode != 200 {
             if shouldRetryForTimeout(statusCode: httpResponse.statusCode) {
-                await onLog?("Timeout status code \(httpResponse.statusCode) (\(modelName))", .warning)
+                await onLog?("[\(requestID)] Timeout status code \(httpResponse.statusCode) (\(modelName))", .warning)
                 throw TranscriptionError.timeout
             }
 
@@ -254,94 +651,35 @@ actor OpenAITranscriptionService {
         return result.text
     }
 
-    private func transcribeInParallelRace(
-        primaryRequestTemplate: URLRequest,
-        primaryBodyURL: URL,
-        primaryModel: String,
-        fallbackRequestTemplate: URLRequest,
-        fallbackBodyURL: URL,
-        fallbackModel: String,
-        timeoutSeconds: TimeInterval,
-        onLog: LogHandler? = nil
-    ) async throws -> RaceResult {
-        let outcome = await withTaskGroup(
-            of: Result<RaceResult, Error>.self,
-            returning: Result<RaceResult, Error>.self
-        ) { group in
-            group.addTask {
-                do {
-                    let text = try await self.transcribeSingleModel(
-                        requestTemplate: primaryRequestTemplate,
-                        bodyURL: primaryBodyURL,
-                        modelName: primaryModel,
-                        timeoutSeconds: timeoutSeconds,
-                        onLog: onLog
-                    )
-                    return .success(RaceResult(model: primaryModel, text: text))
-                } catch {
-                    return .failure(error)
-                }
-            }
+    private func hedgeDelay(forAudioDuration duration: TimeInterval) -> TimeInterval {
+        // Transcription latency tends to be mostly constant; use duration only as a weak signal,
+        // and cap aggressively so we start a hedge request promptly when tail latency happens.
+        let dynamic = 7 + (duration * 0.2)
+        return min(20, max(8, dynamic))
+    }
 
-            group.addTask {
-                do {
-                    let text = try await self.transcribeSingleModel(
-                        requestTemplate: fallbackRequestTemplate,
-                        bodyURL: fallbackBodyURL,
-                        modelName: fallbackModel,
-                        timeoutSeconds: timeoutSeconds,
-                        onLog: onLog
-                    )
-                    return .success(RaceResult(model: fallbackModel, text: text))
-                } catch {
-                    return .failure(error)
-                }
-            }
-
-            var sawTimeout = false
-            var lastError: Error?
-
-            while let result = await group.next() {
-                switch result {
-                case .success(let raceResult):
-                    group.cancelAll()
-                    return .success(raceResult)
-                case .failure(let error):
-                    if shouldRetryForTimeout(error: error) {
-                        sawTimeout = true
-                    }
-                    lastError = error
-                }
-            }
-
-            if sawTimeout {
-                return .failure(TranscriptionError.timeout)
-            }
-            return .failure(lastError ?? URLError(.unknown))
+    private func hedgeDelayForAttempt(attempt: Int, baseHedgeDelay: TimeInterval) -> TimeInterval {
+        // First attempt: wait based on the audio duration heuristic.
+        if attempt == 0 {
+            return min(requestTimeoutCeiling, baseHedgeDelay)
         }
 
-        return try outcome.get()
+        // Retries: hedge quickly.
+        return min(6, max(2, baseHedgeDelay * 0.25))
     }
 
-    private func timeoutBudget(forAudioDuration duration: TimeInterval) -> TimeInterval {
-        // Aggressive heuristic:
-        // - short clips fail fast to trigger retries quickly
-        // - longer clips still get more time
-        // - bounded to avoid hanging requests
-        let dynamic = 7 + (duration * 0.2)
-        return min(45, max(8, dynamic))
-    }
-
-    private func timeoutBudgetForAttempt(attempt: Int, baseAttemptTimeout: TimeInterval) -> TimeInterval {
-        // Keep the first attempt fast, but give retries a much wider budget so
-        // transient backend slowness does not deterministically fail every retry.
+    private func attemptDeadlineForAttempt(attempt: Int, baseHedgeDelay: TimeInterval) -> TimeInterval {
+        // Decouple "when to hedge" from "when to retry":
+        // - hedge early
+        // - allow a wider overall attempt deadline before declaring a timeout
         if attempt == 0 {
-            return min(requestTimeoutCeiling, baseAttemptTimeout)
+            let firstAttemptDeadline = max(20, baseHedgeDelay + 15)
+            return min(requestTimeoutCeiling, firstAttemptDeadline)
         }
 
         let retryFloor: TimeInterval = 55
-        let widenedRetryBudget = max(retryFloor, baseAttemptTimeout * 2.5) + (Double(attempt - 1) * 20)
-        return min(requestTimeoutCeiling, widenedRetryBudget)
+        let widenedRetryBudget = max(retryFloor, baseHedgeDelay * 2.5) + (Double(attempt - 1) * 20)
+        return min(requestTimeoutCeiling, max(widenedRetryBudget, baseHedgeDelay + 20))
     }
 
     private func estimateAudioDurationFromFileSize(audioURL: URL) -> TimeInterval? {
@@ -355,33 +693,6 @@ actor OpenAITranscriptionService {
 
         // Recorder uses ~48kbps AAC (~6KB/s); this keeps heuristics available even without explicit duration.
         return Double(fileSize) / 6_000
-    }
-
-    private func uploadWithForcedTimeout(
-        request: URLRequest,
-        bodyURL: URL,
-        timeoutSeconds: TimeInterval
-    ) async throws -> (Data, URLResponse) {
-        let upload = self.upload
-
-        return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
-            group.addTask {
-                try await upload(request, bodyURL)
-            }
-            group.addTask {
-                try await Task.sleep(for: .seconds(timeoutSeconds))
-                throw URLError(.timedOut)
-            }
-
-            defer {
-                group.cancelAll()
-            }
-
-            guard let firstResult = try await group.next() else {
-                throw URLError(.unknown)
-            }
-            return firstResult
-        }
     }
 
     private func shouldRetryForTimeout(statusCode: Int) -> Bool {
@@ -399,6 +710,37 @@ actor OpenAITranscriptionService {
 
         let nsError = error as NSError
         return nsError.domain == NSURLErrorDomain && nsError.code == URLError.timedOut.rawValue
+    }
+
+    private func isLikelyLocalConnectivityError(_ error: Error) -> Bool {
+        let urlError: URLError?
+        if let direct = error as? URLError {
+            urlError = direct
+        } else {
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain {
+                urlError = URLError(URLError.Code(rawValue: nsError.code))
+            } else {
+                urlError = nil
+            }
+        }
+
+        guard let urlError else {
+            return false
+        }
+
+        switch urlError.code {
+        case .notConnectedToInternet,
+             .networkConnectionLost,
+             .dnsLookupFailed,
+             .cannotFindHost,
+             .cannotConnectToHost,
+             .internationalRoamingOff,
+             .dataNotAllowed:
+            return true
+        default:
+            return false
+        }
     }
 
     private func createMultipartBodyFile(

@@ -134,7 +134,7 @@ struct OpenAITranscriptionServiceTests {
             maxTimeoutRetries: 3,
             retryDelay: .milliseconds(1),
             apiKeyProvider: { "test-api-key" },
-            upload: { _, _ in
+            upload: { _, _, _ in
                 let attempt = await attempts.increment()
                 if attempt < 3 {
                     throw URLError(.timedOut)
@@ -181,7 +181,7 @@ struct OpenAITranscriptionServiceTests {
             maxTimeoutRetries: 3,
             retryDelay: .milliseconds(1),
             apiKeyProvider: { "test-api-key" },
-            upload: { _, _ in
+            upload: { _, _, _ in
                 _ = await attempts.increment()
                 throw URLError(.timedOut)
             }
@@ -215,7 +215,7 @@ struct OpenAITranscriptionServiceTests {
             maxTimeoutRetries: 3,
             retryDelay: .milliseconds(1),
             apiKeyProvider: { "test-api-key" },
-            upload: { _, _ in
+            upload: { _, _, _ in
                 _ = await attempts.increment()
                 throw URLError(.notConnectedToInternet)
             }
