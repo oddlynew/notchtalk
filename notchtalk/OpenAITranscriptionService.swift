@@ -333,8 +333,15 @@ actor OpenAITranscriptionService {
     }
 
     private func timeoutBudgetForAttempt(attempt: Int, baseAttemptTimeout: TimeInterval) -> TimeInterval {
-        let growthFactor = pow(1.6, Double(attempt))
-        return min(requestTimeoutCeiling, baseAttemptTimeout * growthFactor)
+        // Keep the first attempt fast, but give retries a much wider budget so
+        // transient backend slowness does not deterministically fail every retry.
+        if attempt == 0 {
+            return min(requestTimeoutCeiling, baseAttemptTimeout)
+        }
+
+        let retryFloor: TimeInterval = 55
+        let widenedRetryBudget = max(retryFloor, baseAttemptTimeout * 2.5) + (Double(attempt - 1) * 20)
+        return min(requestTimeoutCeiling, widenedRetryBudget)
     }
 
     private func estimateAudioDurationFromFileSize(audioURL: URL) -> TimeInterval? {
