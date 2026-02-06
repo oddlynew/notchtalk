@@ -32,7 +32,7 @@ final class NotchStateManager {
     private var recordingTask: Task<Void, Never>?
     private var processingTask: Task<Void, Never>?
     private let audioRecorder = AudioRecorder()
-    private let transcriptionService = OpenAITranscriptionService()
+    private let transcriptionService = OpenAITranscriptionService(fallbackModel: "gpt-4o-mini-transcribe")
     private let diagnosticsStore = TranscriptionDiagnosticsStore.shared
     private var currentRecordingURL: URL?
     private var activeDiagnosticsID: UUID?
@@ -100,6 +100,7 @@ final class NotchStateManager {
         }
 
         currentRecordingURL = recordingURL
+        let capturedRecordingDuration = recordingDuration
         state = .processing
         retryAttempt = nil
         totalRetries = 0
@@ -117,6 +118,7 @@ final class NotchStateManager {
                 let transcription = try await transcriptionService.transcribe(
                     audioURL: recordingURL,
                     prompt: prompt,
+                    audioDuration: capturedRecordingDuration,
                     onRetry: { [weak self] attempt, totalRetries in
                         self?.retryAttempt = attempt
                         self?.totalRetries = totalRetries
