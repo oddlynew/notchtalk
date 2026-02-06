@@ -90,10 +90,11 @@ final class NotchWindowController {
         // Prefer the camera-notch center when available; fall back to screen center.
         let centerX = notchCenterX(for: screen)
 
-        // Position at top of screen, below menu bar/notch area
-        let topY = screen.frame.maxY - screen.safeAreaInsets.top - panelHeight
+        // Position near the bottom with a subtle inset from screen edge.
+        let bottomMargin: CGFloat = 10
+        let bottomY = screen.frame.minY + screen.safeAreaInsets.bottom + bottomMargin
 
-        let frame = NSRect(x: centerX - panelWidth / 2, y: topY, width: panelWidth, height: panelHeight)
+        let frame = NSRect(x: centerX - panelWidth / 2, y: bottomY, width: panelWidth, height: panelHeight)
         let alignedFrame = screen.backingAlignedRect(
             frame,
             options: [.alignMinXNearest, .alignMinYNearest, .alignWidthNearest, .alignHeightNearest]

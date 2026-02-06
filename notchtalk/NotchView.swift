@@ -14,6 +14,8 @@ struct NotchView: View {
 
     var body: some View {
         VStack {
+            Spacer()
+
             if isActive {
                 pillContent
                     .padding(.horizontal, 16)
@@ -23,12 +25,10 @@ struct NotchView: View {
                             .fill(.black)
                             .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
                     )
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-
-            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .animation(.spring(duration: 0.3, bounce: 0.2), value: isActive)
         .animation(.spring(duration: 0.2), value: stateManager.state)
     }
