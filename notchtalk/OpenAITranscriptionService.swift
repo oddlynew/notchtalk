@@ -13,12 +13,20 @@ actor OpenAITranscriptionService {
     typealias HedgeDelayCalculator = @Sendable (_ audioDuration: TimeInterval) -> TimeInterval
 
     private static let primaryModelName = "gpt-4o-transcribe"
+    private static let retryableHTTPStatusCodes: Set<Int> = [408, 429, 500, 502, 503, 504]
     private let endpoint = URL(string: "https://api.openai.com/v1/audio/transcriptions")!
     private let model = OpenAITranscriptionService.primaryModelName
     private let fallbackModel: String?
     private let requestTimeoutCeiling: TimeInterval
+    private let overallTimeoutCeiling: TimeInterval
+    private let overallTimeoutFloor: TimeInterval
+    private let overallTimeoutMultiplier: Double
     private let maxTimeoutRetries: Int
     private let retryDelay: Duration
+    private let retryMaxDelay: Duration
+    private let retryJitterFraction: Double
+    private let randomDouble: @Sendable () -> Double
+    private let metricsSlowThresholdSeconds: TimeInterval
     private let hedgeDelayCalculator: HedgeDelayCalculator
     private let fallbackGraceSeconds: TimeInterval
     private let upload: UploadFunction
@@ -28,8 +36,14 @@ actor OpenAITranscriptionService {
     init(
         maxTimeoutRetries: Int = 3,
         retryDelay: Duration = .milliseconds(500),
+        retryMaxDelay: Duration = .seconds(4),
+        retryJitterFraction: Double = 0.2,
+        overallTimeoutFloor: TimeInterval = 60,
+        overallTimeoutCeiling: TimeInterval = 120,
+        overallTimeoutMultiplier: Double = 2.0,
         fallbackModel: String? = nil,
-        requestTimeoutCeiling: TimeInterval = 120,
+        requestTimeoutCeiling: TimeInterval = 180,
+        metricsSlowThresholdSeconds: TimeInterval = 8,
         fallbackGraceSeconds: TimeInterval = 2,
         hedgeDelayCalculator: @escaping HedgeDelayCalculator = { duration in
             // Transcription latency tends to be mostly constant; use duration only as a weak signal,
@@ -38,13 +52,20 @@ actor OpenAITranscriptionService {
             return min(20, max(8, dynamic))
         },
         apiKeyProvider: @escaping APIKeyProvider = { KeychainService.getAPIKey() },
+        randomDouble: @escaping @Sendable () -> Double = { Double.random(in: 0...1) },
         upload: @escaping UploadFunction = { request, bodyURL, delegate in
             try await URLSession.shared.upload(for: request, fromFile: bodyURL, delegate: delegate)
         }
     ) {
         self.maxTimeoutRetries = max(0, maxTimeoutRetries)
         self.retryDelay = retryDelay
-        self.requestTimeoutCeiling = requestTimeoutCeiling
+        self.retryMaxDelay = retryMaxDelay
+        self.retryJitterFraction = max(0, min(1, retryJitterFraction))
+        self.overallTimeoutCeiling = max(0, overallTimeoutCeiling)
+        self.overallTimeoutFloor = max(0, min(overallTimeoutFloor, overallTimeoutCeiling))
+        self.overallTimeoutMultiplier = max(0, overallTimeoutMultiplier)
+        self.requestTimeoutCeiling = max(5, requestTimeoutCeiling)
+        self.metricsSlowThresholdSeconds = max(0, metricsSlowThresholdSeconds)
         self.fallbackGraceSeconds = max(0, fallbackGraceSeconds)
         self.hedgeDelayCalculator = hedgeDelayCalculator
         let normalizedFallback = fallbackModel?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,6 +76,7 @@ actor OpenAITranscriptionService {
         }
         self.upload = upload
         self.apiKeyProvider = apiKeyProvider
+        self.randomDouble = randomDouble
     }
 
     struct TranscriptionResponse: Decodable {
@@ -109,15 +131,29 @@ actor OpenAITranscriptionService {
             throw TranscriptionError.noAPIKey
         }
 
+        let audioBytes = fileSizeBytes(at: audioURL)
         let estimatedAudioDuration = max(
             0,
             audioDuration
                 ?? estimateAudioDurationFromFileSize(audioURL: audioURL)
                 ?? 20
         )
+        let overallBudget = overallTimeoutBudget(forEstimatedAudioDuration: estimatedAudioDuration)
         let baseHedgeDelay = hedgeDelay(forAudioDuration: estimatedAudioDuration)
+
+        if let audioBytes {
+            await onLog?(
+                "Audio file \(audioURL.lastPathComponent) (\(audioURL.pathExtension.lowercased())) size=\(formatBytes(audioBytes)); duration_est=\(Int(round(estimatedAudioDuration)))s",
+                .info
+            )
+        } else {
+            await onLog?(
+                "Audio file \(audioURL.lastPathComponent) (\(audioURL.pathExtension.lowercased())); duration_est=\(Int(round(estimatedAudioDuration)))s",
+                .info
+            )
+        }
         await onLog?(
-            "Estimated audio duration \(Int(round(estimatedAudioDuration)))s; hedge-after \(Int(round(baseHedgeDelay)))s",
+            "Timeout budget overall=\(Int(round(overallBudget)))s; hedge-after \(Int(round(baseHedgeDelay)))s; url_timeout=\(Int(round(requestTimeoutCeiling)))s",
             .info
         )
         if let fallbackModel {
@@ -147,19 +183,29 @@ actor OpenAITranscriptionService {
             }
         }
 
+        let overallStart = Date()
         let totalAttempts = maxTimeoutRetries + 1
         for attempt in 0...maxTimeoutRetries {
             do {
-                let hedgeAfter = hedgeDelayForAttempt(
+                let elapsedOverall = Date().timeIntervalSince(overallStart)
+                let remainingOverall = overallBudget - elapsedOverall
+                if remainingOverall <= 0 {
+                    await onLog?("Overall timeout budget exceeded after \(Int(round(elapsedOverall)))s", .error)
+                    throw TranscriptionError.timeout
+                }
+
+                var hedgeAfter = hedgeDelayForAttempt(
                     attempt: attempt,
                     baseHedgeDelay: baseHedgeDelay
                 )
-                let attemptDeadline = attemptDeadlineForAttempt(
+                var attemptDeadline = attemptDeadlineForAttempt(
                     attempt: attempt,
                     baseHedgeDelay: baseHedgeDelay
                 )
+                attemptDeadline = min(attemptDeadline, remainingOverall)
+                hedgeAfter = min(hedgeAfter, max(0, attemptDeadline - 1))
                 await onLog?(
-                    "Attempt \(attempt + 1)/\(totalAttempts): hedge fallback after \(Int(round(hedgeAfter)))s; attempt-timeout after \(Int(round(attemptDeadline)))s",
+                    "Attempt \(attempt + 1)/\(totalAttempts): hedge fallback after \(Int(round(hedgeAfter)))s; attempt-deadline \(Int(round(attemptDeadline)))s; remaining_overall \(Int(round(remainingOverall)))s",
                     .info
                 )
 
@@ -193,10 +239,21 @@ actor OpenAITranscriptionService {
 
                 return raceResult.text
             } catch {
+                if Task.isCancelled {
+                    throw error
+                }
+
                 await onLog?("Request failed with error: \(error.localizedDescription)", .error)
-                if shouldRetryForTimeout(error: error), attempt < maxTimeoutRetries {
+                if shouldRetry(error: error), attempt < maxTimeoutRetries {
                     await onRetry?(attempt + 1, maxTimeoutRetries)
-                    try await Task.sleep(for: retryDelay)
+
+                    let retryAttempt = attempt + 1
+                    let delay = retryDelayForRetryAttempt(retryAttempt)
+                    await onLog?(
+                        "Retry \(retryAttempt)/\(maxTimeoutRetries) in \(formatDuration(delay)) (reason=\(retryReason(error)))",
+                        .warning
+                    )
+                    try await Task.sleep(for: delay)
                     continue
                 }
 
@@ -248,6 +305,12 @@ actor OpenAITranscriptionService {
         String(format: "%.3f", seconds)
     }
 
+    private func formatDuration(_ duration: Duration) -> String {
+        let components = duration.components
+        let seconds = Double(components.seconds) + (Double(components.attoseconds) / 1e18)
+        return String(format: "%.3fs", max(0, seconds))
+    }
+
     private func diffMilliseconds(_ start: Date?, _ end: Date?) -> String? {
         guard let start, let end else {
             return nil
@@ -267,6 +330,112 @@ actor OpenAITranscriptionService {
             return String(format: "%.1fKB", Double(bytes) / 1_024)
         }
         return String(format: "%.1fMB", Double(bytes) / (1_024 * 1_024))
+    }
+
+    private func fileSizeBytes(at url: URL) -> Int64? {
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]) else {
+            return nil
+        }
+        guard let size = values.fileSize, size > 0 else {
+            return nil
+        }
+        return Int64(size)
+    }
+
+    private func overallTimeoutBudget(forEstimatedAudioDuration duration: TimeInterval) -> TimeInterval {
+        let scaled = duration * overallTimeoutMultiplier
+        let clamped = max(overallTimeoutFloor, scaled)
+        return min(overallTimeoutCeiling, clamped)
+    }
+
+    private func durationSeconds(_ duration: Duration) -> Double {
+        let components = duration.components
+        return Double(components.seconds) + (Double(components.attoseconds) / 1e18)
+    }
+
+    private func retryDelayForRetryAttempt(_ retryAttempt: Int) -> Duration {
+        let base = max(0, durationSeconds(retryDelay))
+        let maxDelay = max(0, durationSeconds(retryMaxDelay))
+        let exponent = max(0, retryAttempt - 1)
+        let raw = base * pow(2.0, Double(exponent))
+        let capped = min(raw, maxDelay > 0 ? maxDelay : raw)
+
+        let jitter = 1.0 + ((randomDouble() * 2.0 - 1.0) * retryJitterFraction)
+        let finalSeconds = max(0, capped * max(0, jitter))
+        return .milliseconds(Int(round(finalSeconds * 1000)))
+    }
+
+    private func retryReason(_ error: Error) -> String {
+        if shouldRetryForTimeout(error: error) {
+            return "timeout"
+        }
+        if let transcriptionError = error as? TranscriptionError {
+            switch transcriptionError {
+            case .httpError(let code):
+                return "http_\(code)"
+            default:
+                return "transcription_error"
+            }
+        }
+        if let urlError = error as? URLError {
+            return "url_\(urlError.code)"
+        }
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            return "nsurl_\(nsError.code)"
+        }
+        return "other"
+    }
+
+    private func isRetryableTransportError(_ urlError: URLError) -> Bool {
+        switch urlError.code {
+        case .timedOut,
+             .networkConnectionLost,
+             .dnsLookupFailed,
+             .cannotFindHost,
+             .cannotConnectToHost,
+             .secureConnectionFailed:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func shouldRetry(error: Error) -> Bool {
+        if shouldRetryForTimeout(error: error) {
+            return true
+        }
+
+        if let transcriptionError = error as? TranscriptionError {
+            switch transcriptionError {
+            case .httpError(let code):
+                return Self.retryableHTTPStatusCodes.contains(code)
+            default:
+                return false
+            }
+        }
+
+        if let urlError = error as? URLError {
+            return isRetryableTransportError(urlError)
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain {
+            return isRetryableTransportError(URLError(URLError.Code(rawValue: nsError.code)))
+        }
+
+        return false
+    }
+
+    private func isCancellationError(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if let urlError = error as? URLError {
+            return urlError.code == .cancelled
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == URLError.cancelled.rawValue
     }
 
     private func logMetrics(
@@ -361,7 +530,6 @@ actor OpenAITranscriptionService {
         onLog: LogHandler? = nil
     ) async throws -> String {
         let requestID = makeRequestID(prefix: "P")
-        let requestTimeoutSeconds = min(requestTimeoutCeiling, attemptDeadline + 10)
 
         let outcome = await withTaskGroup(
             of: Result<String, Error>.self,
@@ -373,7 +541,6 @@ actor OpenAITranscriptionService {
                         requestTemplate: requestTemplate,
                         bodyURL: bodyURL,
                         modelName: modelName,
-                        requestTimeoutSeconds: requestTimeoutSeconds,
                         requestID: requestID,
                         onLog: onLog
                     )
@@ -427,7 +594,6 @@ actor OpenAITranscriptionService {
     ) async throws -> RaceResult {
         let primaryRequestID = makeRequestID(prefix: "P")
         let fallbackRequestID = makeRequestID(prefix: "F")
-        let requestTimeoutSeconds = min(requestTimeoutCeiling, attemptDeadline + 10)
 
         let outcome = await withTaskGroup(
             of: Result<RaceResult, Error>.self,
@@ -439,7 +605,6 @@ actor OpenAITranscriptionService {
                         requestTemplate: primaryRequestTemplate,
                         bodyURL: primaryBodyURL,
                         modelName: primaryModel,
-                        requestTimeoutSeconds: requestTimeoutSeconds,
                         requestID: primaryRequestID,
                         onLog: onLog
                     )
@@ -462,7 +627,6 @@ actor OpenAITranscriptionService {
                         requestTemplate: fallbackBodyContext.requestTemplate,
                         bodyURL: fallbackBodyContext.bodyURL,
                         modelName: fallbackBodyContext.model,
-                        requestTimeoutSeconds: requestTimeoutSeconds,
                         requestID: fallbackRequestID,
                         onLog: onLog
                     )
@@ -600,19 +764,19 @@ actor OpenAITranscriptionService {
         requestTemplate: URLRequest,
         bodyURL: URL,
         modelName: String,
-        requestTimeoutSeconds: TimeInterval,
         requestID: String,
         onLog: LogHandler? = nil
     ) async throws -> String {
         var request = requestTemplate
-        request.timeoutInterval = min(requestTimeoutCeiling, requestTimeoutSeconds)
+        request.timeoutInterval = requestTimeoutCeiling
 
         let metricsCollector = TaskMetricsCollector()
         let inFlightAtStart = incrementInFlightRequests()
         let startTime = Date()
+        let bodyBytes = fileSizeBytes(at: bodyURL)
 
         await onLog?(
-            "[\(requestID)] Sending request to OpenAI transcription API (\(modelName)); inFlight=\(inFlightAtStart); url_timeout=\(Int(round(request.timeoutInterval)))s",
+            "[\(requestID)] Sending request to OpenAI transcription API (\(modelName)); inFlight=\(inFlightAtStart); url_timeout=\(Int(round(request.timeoutInterval)))s; body=\(bodyBytes.map(formatBytes) ?? "?")",
             .info
         )
 
@@ -622,11 +786,13 @@ actor OpenAITranscriptionService {
         } catch {
             let elapsed = Date().timeIntervalSince(startTime)
             let inFlightAfter = decrementInFlightRequests()
+
+            let isCancellation = isCancellationError(error)
             await onLog?(
-                "[\(requestID)] Request failed after \(formatSeconds(elapsed))s; inFlight=\(inFlightAfter); error=\(error.localizedDescription)",
-                .error
+                "[\(requestID)] Request \(isCancellation ? "cancelled" : "failed") after \(formatSeconds(elapsed))s; inFlight=\(inFlightAfter); error=\(error.localizedDescription)",
+                isCancellation ? .warning : .error
             )
-            if let metrics = metricsCollector.metrics {
+            if let metrics = metricsCollector.metrics, (!isCancellation || elapsed >= metricsSlowThresholdSeconds) {
                 await logMetrics(metrics, requestID: requestID, modelName: modelName, onLog: onLog)
             }
             throw error
@@ -635,10 +801,10 @@ actor OpenAITranscriptionService {
         let elapsed = Date().timeIntervalSince(startTime)
         let inFlightAfter = decrementInFlightRequests()
         await onLog?(
-            "[\(requestID)] Upload completed in \(formatSeconds(elapsed))s; inFlight=\(inFlightAfter)",
+            "[\(requestID)] Request completed in \(formatSeconds(elapsed))s; inFlight=\(inFlightAfter)",
             .info
         )
-        if let metrics = metricsCollector.metrics {
+        if let metrics = metricsCollector.metrics, elapsed >= metricsSlowThresholdSeconds {
             await logMetrics(metrics, requestID: requestID, modelName: modelName, onLog: onLog)
         }
 
@@ -652,6 +818,16 @@ actor OpenAITranscriptionService {
             if shouldRetryForTimeout(statusCode: httpResponse.statusCode) {
                 await onLog?("[\(requestID)] Timeout status code \(httpResponse.statusCode) (\(modelName))", .warning)
                 throw TranscriptionError.timeout
+            }
+
+            if Self.retryableHTTPStatusCodes.contains(httpResponse.statusCode) {
+                let serverMessage = (try? JSONDecoder().decode(ErrorResponse.self, from: data))?.error.message
+                if let serverMessage, !serverMessage.isEmpty {
+                    await onLog?("[\(requestID)] Retryable HTTP \(httpResponse.statusCode) (\(modelName)): \(serverMessage)", .warning)
+                } else {
+                    await onLog?("[\(requestID)] Retryable HTTP \(httpResponse.statusCode) (\(modelName))", .warning)
+                }
+                throw TranscriptionError.httpError(httpResponse.statusCode)
             }
 
             if let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
@@ -683,13 +859,15 @@ actor OpenAITranscriptionService {
         // - hedge early
         // - allow a wider overall attempt deadline before declaring a timeout
         if attempt == 0 {
-            let firstAttemptDeadline = max(20, baseHedgeDelay + 15)
+            // Give the primary request time to finish in most real-world conditions
+            // while still allowing hedging to kick in for tail latency.
+            let firstAttemptDeadline = max(35, baseHedgeDelay + 25)
             return min(requestTimeoutCeiling, firstAttemptDeadline)
         }
 
-        let retryFloor: TimeInterval = 55
-        let widenedRetryBudget = max(retryFloor, baseHedgeDelay * 2.5) + (Double(attempt - 1) * 20)
-        return min(requestTimeoutCeiling, max(widenedRetryBudget, baseHedgeDelay + 20))
+        let retryFloor: TimeInterval = 45
+        let widenedRetryBudget = max(retryFloor, baseHedgeDelay * 2.0) + (Double(attempt - 1) * 15)
+        return min(requestTimeoutCeiling, max(widenedRetryBudget, baseHedgeDelay + 25))
     }
 
     private func estimateAudioDurationFromFileSize(audioURL: URL) -> TimeInterval? {
@@ -765,6 +943,7 @@ actor OpenAITranscriptionService {
         fileManager.createFile(atPath: bodyURL.path, contents: nil)
 
         let outputHandle = try FileHandle(forWritingTo: bodyURL)
+        let mimeType = mimeTypeForAudioFile(at: audioURL)
 
         do {
             outputHandle.writeString("--\(boundary)\r\n")
@@ -783,7 +962,7 @@ actor OpenAITranscriptionService {
 
             outputHandle.writeString("--\(boundary)\r\n")
             outputHandle.writeString("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n")
-            outputHandle.writeString("Content-Type: audio/m4a\r\n\r\n")
+            outputHandle.writeString("Content-Type: \(mimeType)\r\n\r\n")
             try appendFile(at: audioURL, to: outputHandle)
             outputHandle.writeString("\r\n")
             outputHandle.writeString("--\(boundary)--\r\n")
@@ -793,6 +972,25 @@ actor OpenAITranscriptionService {
             try? outputHandle.close()
             try? fileManager.removeItem(at: bodyURL)
             throw error
+        }
+    }
+
+    private func mimeTypeForAudioFile(at url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "m4a":
+            return "audio/m4a"
+        case "mp3":
+            return "audio/mpeg"
+        case "wav":
+            return "audio/wav"
+        case "aac":
+            return "audio/aac"
+        case "mp4":
+            return "audio/mp4"
+        case "caf":
+            return "audio/x-caf"
+        default:
+            return "application/octet-stream"
         }
     }
 

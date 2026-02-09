@@ -83,7 +83,8 @@ final class TranscriptionDiagnosticsStore {
     private(set) var entries: [TranscriptionDiagnosticsEntry] = []
 
     private let maxEntries = 250
-    private let maxLogsPerEntry = 80
+    // Metrics logging can add several lines per attempt; keep enough history to diagnose tail latency.
+    private let maxLogsPerEntry = 200
     private let fileManager = FileManager.default
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -150,7 +151,7 @@ final class TranscriptionDiagnosticsStore {
     func registerRetry(attempt: Int, total: Int, for id: UUID) {
         mutateEntry(id) { entry in
             entry.retryCount = max(entry.retryCount, attempt)
-            entry.logs.append(.init(level: .warning, message: "Retry \(attempt)/\(total) after timeout"))
+            entry.logs.append(.init(level: .warning, message: "Retry \(attempt)/\(total) scheduled"))
             if entry.logs.count > maxLogsPerEntry {
                 entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
             }

@@ -66,6 +66,26 @@ struct NotchView: View {
                     .tint(.white)
 
                 AnimatedDotsText(text: stateManager.processingStatusText)
+
+                if stateManager.processingElapsed >= 10 {
+                    Button {
+                        stateManager.retryProcessing()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Retry transcription")
+
+                    Button {
+                        stateManager.cancel()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Cancel (Esc)")
+                }
             }
 
         case .done:
