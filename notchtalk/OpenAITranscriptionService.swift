@@ -10,14 +10,17 @@ actor OpenAITranscriptionService {
     typealias APIKeyProvider = @Sendable () -> String?
     typealias RetryHandler = @MainActor @Sendable (_ retryAttempt: Int, _ totalRetries: Int) async -> Void
     typealias LogHandler = @MainActor @Sendable (_ message: String, _ level: TranscriptionDiagnosticsEntry.LogLevel) async -> Void
+    typealias HedgeDelayCalculator = @Sendable (_ audioDuration: TimeInterval) -> TimeInterval
 
     private static let primaryModelName = "gpt-4o-transcribe"
     private let endpoint = URL(string: "https://api.openai.com/v1/audio/transcriptions")!
     private let model = OpenAITranscriptionService.primaryModelName
     private let fallbackModel: String?
-    private let requestTimeoutCeiling: TimeInterval = 120
+    private let requestTimeoutCeiling: TimeInterval
     private let maxTimeoutRetries: Int
     private let retryDelay: Duration
+    private let hedgeDelayCalculator: HedgeDelayCalculator
+    private let fallbackGraceSeconds: TimeInterval
     private let upload: UploadFunction
     private let apiKeyProvider: APIKeyProvider
     private var inFlightNetworkRequests = 0
@@ -26,6 +29,14 @@ actor OpenAITranscriptionService {
         maxTimeoutRetries: Int = 3,
         retryDelay: Duration = .milliseconds(500),
         fallbackModel: String? = nil,
+        requestTimeoutCeiling: TimeInterval = 120,
+        fallbackGraceSeconds: TimeInterval = 2,
+        hedgeDelayCalculator: @escaping HedgeDelayCalculator = { duration in
+            // Transcription latency tends to be mostly constant; use duration only as a weak signal,
+            // and cap aggressively so we start a hedge request promptly when tail latency happens.
+            let dynamic = 7 + (duration * 0.2)
+            return min(20, max(8, dynamic))
+        },
         apiKeyProvider: @escaping APIKeyProvider = { KeychainService.getAPIKey() },
         upload: @escaping UploadFunction = { request, bodyURL, delegate in
             try await URLSession.shared.upload(for: request, fromFile: bodyURL, delegate: delegate)
@@ -33,6 +44,9 @@ actor OpenAITranscriptionService {
     ) {
         self.maxTimeoutRetries = max(0, maxTimeoutRetries)
         self.retryDelay = retryDelay
+        self.requestTimeoutCeiling = requestTimeoutCeiling
+        self.fallbackGraceSeconds = max(0, fallbackGraceSeconds)
+        self.hedgeDelayCalculator = hedgeDelayCalculator
         let normalizedFallback = fallbackModel?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let normalizedFallback, !normalizedFallback.isEmpty, normalizedFallback != Self.primaryModelName {
             self.fallbackModel = normalizedFallback
@@ -411,7 +425,6 @@ actor OpenAITranscriptionService {
         attemptDeadline: TimeInterval,
         onLog: LogHandler? = nil
     ) async throws -> RaceResult {
-        let fallbackGraceSeconds: TimeInterval = 2
         let primaryRequestID = makeRequestID(prefix: "P")
         let fallbackRequestID = makeRequestID(prefix: "F")
         let requestTimeoutSeconds = min(requestTimeoutCeiling, attemptDeadline + 10)
@@ -498,7 +511,7 @@ actor OpenAITranscriptionService {
                             )
                             group.addTask {
                                 do {
-                                    try await Task.sleep(for: .seconds(fallbackGraceSeconds))
+                                    try await Task.sleep(for: .seconds(self.fallbackGraceSeconds))
                                     return .failure(
                                         AttemptTaggedError(
                                             kind: .fallbackGrace,
@@ -652,10 +665,7 @@ actor OpenAITranscriptionService {
     }
 
     private func hedgeDelay(forAudioDuration duration: TimeInterval) -> TimeInterval {
-        // Transcription latency tends to be mostly constant; use duration only as a weak signal,
-        // and cap aggressively so we start a hedge request promptly when tail latency happens.
-        let dynamic = 7 + (duration * 0.2)
-        return min(20, max(8, dynamic))
+        hedgeDelayCalculator(duration)
     }
 
     private func hedgeDelayForAttempt(attempt: Int, baseHedgeDelay: TimeInterval) -> TimeInterval {
