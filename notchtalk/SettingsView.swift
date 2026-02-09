@@ -9,8 +9,8 @@ import UniformTypeIdentifiers
 
 struct SettingsView: View {
     enum SettingsTab: Hashable {
-        case general
-        case diagnostics
+        case history
+        case settings
     }
 
     enum DiagnosticsExportFormat {
@@ -51,32 +51,33 @@ struct SettingsView: View {
     @State private var showAPIKeyField = false
     @State private var saveError: String?
     @State private var showSaveSuccess = false
-    @State private var selectedTab: SettingsTab = .general
-    @State private var selectedDiagnosticsStatus: TranscriptionDiagnosticsEntry.Status?
-    @State private var selectedDiagnosticsID: UUID?
+    @State private var selectedTab: SettingsTab = .history
+    @State private var selectedHistoryStatus: TranscriptionDiagnosticsEntry.Status?
+    @State private var selectedHistoryID: UUID?
     @State private var searchText = ""
     @State private var exportFeedbackMessage: String?
     @State private var exportFeedbackIsError = false
+    @State private var historyDetailsMode: HistoryDetailsMode = .transcript
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            generalSettingsTab
+            historyTab
                 .tabItem {
-                    Label("General", systemImage: "gearshape")
+                    Label("History", systemImage: "clock.arrow.circlepath")
                 }
-                .tag(SettingsTab.general)
+                .tag(SettingsTab.history)
 
-            diagnosticsTab
+            settingsTab
                 .tabItem {
-                    Label("Diagnostics", systemImage: "waveform.badge.exclamationmark")
+                    Label("Settings", systemImage: "gearshape")
                 }
-                .tag(SettingsTab.diagnostics)
+                .tag(SettingsTab.settings)
         }
         .frame(width: 760, height: 520)
-        .navigationTitle("Notchtalk Settings")
+        .navigationTitle("Notchtalk")
     }
 
-    private var generalSettingsTab: some View {
+    private var settingsTab: some View {
         Form {
             Section {
                 apiKeySection
@@ -100,20 +101,29 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Auto-paste after transcription", isOn: $settingsManager.autoPasteEnabled)
+                Toggle("Keep failed recordings for manual retry (recommended)", isOn: $settingsManager.retainFailedRecordingsEnabled)
             } header: {
                 Text("Behavior")
             } footer: {
-                Text("Automatically paste the transcription at your cursor position.")
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Auto-paste inserts the transcription at your cursor position without overwriting your clipboard.")
+                    Text("If a transcription fails after retries, Notchtalk can retain the audio locally so you can re-transcribe it from History.")
+                }
+                .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
     }
 
-    private var diagnosticsTab: some View {
+    private enum HistoryDetailsMode: Hashable {
+        case transcript
+        case diagnostics
+    }
+
+    private var historyTab: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Picker("Status", selection: $selectedDiagnosticsStatus) {
+                Picker("Status", selection: $selectedHistoryStatus) {
                     Text("All").tag(Optional<TranscriptionDiagnosticsEntry.Status>.none)
                     Text("Pending").tag(Optional(TranscriptionDiagnosticsEntry.Status.pending))
                     Text("Succeeded").tag(Optional(TranscriptionDiagnosticsEntry.Status.succeeded))
@@ -125,61 +135,39 @@ struct SettingsView: View {
 
                 Spacer()
 
-                Text("\(filteredDiagnosticsEntries.count) entries")
+                Text("\(filteredHistoryEntries.count) entries")
                     .foregroundStyle(.secondary)
-
-                Menu("Export") {
-                    Button(DiagnosticsExportFormat.json.buttonTitle) {
-                        exportDiagnostics(.json)
-                    }
-                    Button(DiagnosticsExportFormat.csv.buttonTitle) {
-                        exportDiagnostics(.csv)
-                    }
-                }
-                .disabled(filteredDiagnosticsEntries.isEmpty)
-
-                Button("Clear All", role: .destructive) {
-                    diagnosticsStore.clearAll()
-                    selectedDiagnosticsID = nil
-                }
-                .disabled(diagnosticsStore.entries.isEmpty)
-            }
-
-            if let exportFeedbackMessage {
-                Text(exportFeedbackMessage)
-                    .font(.caption)
-                    .foregroundStyle(exportFeedbackIsError ? .red : .secondary)
             }
 
             HStack(alignment: .top, spacing: 12) {
-                diagnosticsList
-                diagnosticsDetails
+                historyList
+                historyDetails
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(16)
-        .searchable(text: $searchText, placement: .toolbar, prompt: "Search filename, error, logs")
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Search transcript, error, logs")
         .onAppear {
-            if selectedDiagnosticsID == nil {
-                selectedDiagnosticsID = filteredDiagnosticsEntries.first?.id
+            if selectedHistoryID == nil {
+                selectedHistoryID = filteredHistoryEntries.first?.id
             }
         }
-        .onChange(of: filteredDiagnosticsEntries.map(\.id)) {
-            if let selectedDiagnosticsID, filteredDiagnosticsEntries.contains(where: { $0.id == selectedDiagnosticsID }) {
+        .onChange(of: filteredHistoryEntries.map(\.id)) {
+            if let selectedHistoryID, filteredHistoryEntries.contains(where: { $0.id == selectedHistoryID }) {
                 return
             }
-            self.selectedDiagnosticsID = filteredDiagnosticsEntries.first?.id
+            self.selectedHistoryID = filteredHistoryEntries.first?.id
         }
     }
 
-    private var diagnosticsList: some View {
-        List(filteredDiagnosticsEntries, selection: $selectedDiagnosticsID) { entry in
+    private var historyList: some View {
+        List(filteredHistoryEntries, selection: $selectedHistoryID) { entry in
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     statusDot(for: entry.status)
-                    Text(entry.sourceAudioFilename)
+                    Text(titleText(for: entry))
                         .font(.headline)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Spacer()
                     Text(entry.updatedAt, format: .dateTime.hour().minute().second())
                         .font(.caption)
@@ -205,76 +193,75 @@ struct SettingsView: View {
             }
             .padding(.vertical, 2)
             .tag(entry.id)
+            .contextMenu {
+                if let transcript = entry.transcriptText, !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("Copy text") {
+                        ClipboardService.copy(transcript)
+                    }
+                }
+
+                if shouldShowRetranscribe(for: entry) {
+                    Button("Re-transcribe") {
+                        NotchStateManager.shared.retranscribe(diagnosticsID: entry.id)
+                    }
+                }
+
+                Button("See diagnostics") {
+                    selectedHistoryID = entry.id
+                    historyDetailsMode = .diagnostics
+                }
+            }
         }
         .frame(minWidth: 320, maxWidth: 360, maxHeight: .infinity)
     }
 
-    private var diagnosticsDetails: some View {
+    private var historyDetails: some View {
         Group {
-            if let entry = selectedDiagnosticsEntry {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Details")
-                            .font(.title3.weight(.semibold))
-
-                        GroupBox {
-                            VStack(alignment: .leading, spacing: 8) {
-                                detailsRow(title: "Status", value: entry.status.rawValue.capitalized)
-                                detailsRow(title: "Created", value: formattedTimestamp(entry.createdAt))
-                                detailsRow(title: "Updated", value: formattedTimestamp(entry.updatedAt))
-                                detailsRow(title: "Prompt", value: entry.promptProvided ? "Included" : "None")
-                                detailsRow(title: "Retries", value: "\(entry.retryCount)")
-                                detailsRow(title: "Audio File", value: entry.sourceAudioFilename)
-                                if let count = entry.outputCharacterCount {
-                                    detailsRow(title: "Output Length", value: "\(count) chars")
-                                }
-                                if let errorMessage = entry.errorMessage, !errorMessage.isEmpty {
-                                    detailsRow(title: "Error", value: errorMessage)
-                                }
+            if let entry = selectedHistoryEntry {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Button("Copy") {
+                            if let transcript = entry.transcriptText {
+                                ClipboardService.copy(transcript)
                             }
                         }
+                        .disabled((entry.transcriptText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                        Text("Log Events")
-                            .font(.headline)
+                        Button("Re-transcribe") {
+                            NotchStateManager.shared.retranscribe(diagnosticsID: entry.id)
+                        }
+                        .disabled(!shouldShowRetranscribe(for: entry))
 
-                        if entry.logs.isEmpty {
-                            Text("No logs available.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(entry.logs.reversed()) { event in
-                                    HStack(alignment: .top, spacing: 8) {
-                                        Text(formattedTime(event.timestamp))
-                                            .font(.caption.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: 80, alignment: .leading)
+                        Spacer()
+                    }
 
-                                        Text(event.level.rawValue.uppercased())
-                                            .font(.caption2.weight(.bold))
-                                            .foregroundStyle(color(for: event.level))
-                                            .frame(width: 55, alignment: .leading)
+                    Picker("Details", selection: $historyDetailsMode) {
+                        Text("Transcript").tag(HistoryDetailsMode.transcript)
+                        Text("Diagnostics").tag(HistoryDetailsMode.diagnostics)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 360)
 
-                                        Text(event.message)
-                                            .font(.caption)
-                                            .textSelection(.enabled)
-
-                                        Spacer(minLength: 0)
-                                    }
-                                }
-                            }
+                    Group {
+                        switch historyDetailsMode {
+                        case .transcript:
+                            transcriptDetails(for: entry)
+                        case .diagnostics:
+                            diagnosticsDetails(for: entry)
                         }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             } else {
-                ContentUnavailableView("No diagnostics selected", systemImage: "list.bullet.rectangle.portrait")
+                ContentUnavailableView("No history selected", systemImage: "list.bullet.rectangle.portrait")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var filteredDiagnosticsEntries: [TranscriptionDiagnosticsEntry] {
+    private var filteredHistoryEntries: [TranscriptionDiagnosticsEntry] {
         diagnosticsStore.entries.filter { entry in
-            if let selectedDiagnosticsStatus, entry.status != selectedDiagnosticsStatus {
+            if let selectedHistoryStatus, entry.status != selectedHistoryStatus {
                 return false
             }
 
@@ -286,6 +273,9 @@ struct SettingsView: View {
             if entry.sourceAudioFilename.lowercased().contains(needle) {
                 return true
             }
+            if let transcriptText = entry.transcriptText, transcriptText.lowercased().contains(needle) {
+                return true
+            }
             if let errorMessage = entry.errorMessage, errorMessage.lowercased().contains(needle) {
                 return true
             }
@@ -293,11 +283,146 @@ struct SettingsView: View {
         }
     }
 
-    private var selectedDiagnosticsEntry: TranscriptionDiagnosticsEntry? {
-        guard let selectedDiagnosticsID else {
+    private var selectedHistoryEntry: TranscriptionDiagnosticsEntry? {
+        guard let selectedHistoryID else {
             return nil
         }
-        return filteredDiagnosticsEntries.first(where: { $0.id == selectedDiagnosticsID })
+        return filteredHistoryEntries.first(where: { $0.id == selectedHistoryID })
+    }
+
+    private func titleText(for entry: TranscriptionDiagnosticsEntry) -> String {
+        if let transcriptText = entry.transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines), !transcriptText.isEmpty {
+            return transcriptText
+        }
+
+        switch entry.status {
+        case .pending:
+            return "Transcribing..."
+        case .failed:
+            return "Failed transcription"
+        case .cancelled:
+            return "Cancelled transcription"
+        case .succeeded:
+            return entry.sourceAudioFilename
+        }
+    }
+
+    private func shouldShowRetranscribe(for entry: TranscriptionDiagnosticsEntry) -> Bool {
+        if entry.status != .failed && entry.status != .cancelled {
+            return false
+        }
+
+        guard let url = diagnosticsStore.retainedAudioURL(for: entry.id) else {
+            return false
+        }
+
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+    @ViewBuilder
+    private func transcriptDetails(for entry: TranscriptionDiagnosticsEntry) -> some View {
+        if let transcriptText = entry.transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines), !transcriptText.isEmpty {
+            ScrollView {
+                Text(transcriptText)
+                    .font(.body)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            }
+        } else {
+            switch entry.status {
+            case .pending:
+                VStack(alignment: .leading, spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Transcribing...")
+                        .foregroundStyle(.secondary)
+                }
+            case .failed:
+                ContentUnavailableView("No transcript available", systemImage: "exclamationmark.triangle.fill")
+            case .cancelled:
+                ContentUnavailableView("Transcription cancelled", systemImage: "xmark.circle")
+            case .succeeded:
+                ContentUnavailableView("No transcript stored", systemImage: "doc.text.magnifyingglass")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func diagnosticsDetails(for entry: TranscriptionDiagnosticsEntry) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Diagnostics")
+                        .font(.title3.weight(.semibold))
+                    Spacer()
+
+                    Menu("Export") {
+                        Button(DiagnosticsExportFormat.json.buttonTitle) {
+                            exportDiagnostics(.json)
+                        }
+                        Button(DiagnosticsExportFormat.csv.buttonTitle) {
+                            exportDiagnostics(.csv)
+                        }
+                    }
+                    .disabled(filteredHistoryEntries.isEmpty)
+                }
+
+                if let exportFeedbackMessage {
+                    Text(exportFeedbackMessage)
+                        .font(.caption)
+                        .foregroundStyle(exportFeedbackIsError ? .red : .secondary)
+                }
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        detailsRow(title: "Status", value: entry.status.rawValue.capitalized)
+                        detailsRow(title: "Created", value: formattedTimestamp(entry.createdAt))
+                        detailsRow(title: "Updated", value: formattedTimestamp(entry.updatedAt))
+                        detailsRow(title: "Prompt", value: entry.promptProvided ? "Included" : "None")
+                        detailsRow(title: "Retries", value: "\(entry.retryCount)")
+                        detailsRow(title: "Audio File", value: entry.sourceAudioFilename)
+                        detailsRow(title: "Retained Audio", value: entry.retainedAudioFilename == nil ? "None" : "Available")
+                        if let count = entry.outputCharacterCount {
+                            detailsRow(title: "Output Length", value: "\(count) chars")
+                        }
+                        if let errorMessage = entry.errorMessage, !errorMessage.isEmpty {
+                            detailsRow(title: "Error", value: errorMessage)
+                        }
+                    }
+                }
+
+                Text("Log Events")
+                    .font(.headline)
+
+                if entry.logs.isEmpty {
+                    Text("No logs available.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(entry.logs.reversed()) { event in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(formattedTime(event.timestamp))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 80, alignment: .leading)
+
+                                Text(event.level.rawValue.uppercased())
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(color(for: event.level))
+                                    .frame(width: 55, alignment: .leading)
+
+                                Text(event.message)
+                                    .font(.caption)
+                                    .textSelection(.enabled)
+
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func statusDot(for status: TranscriptionDiagnosticsEntry.Status) -> some View {
@@ -350,7 +475,7 @@ struct SettingsView: View {
     }
 
     private func exportDiagnostics(_ format: DiagnosticsExportFormat) {
-        let entries = filteredDiagnosticsEntries
+        let entries = filteredHistoryEntries
         guard !entries.isEmpty else {
             setExportFeedback(message: "No diagnostics to export.", isError: true)
             return
@@ -404,10 +529,12 @@ struct SettingsView: View {
             "created_at",
             "updated_at",
             "audio_filename",
+            "retained_audio_filename",
             "prompt_provided",
             "retry_count",
             "output_character_count",
             "error_message",
+            "transcript_text",
             "logs"
         ].joined(separator: ",")
 
@@ -423,10 +550,12 @@ struct SettingsView: View {
                 ISO8601DateFormatter().string(from: entry.createdAt),
                 ISO8601DateFormatter().string(from: entry.updatedAt),
                 entry.sourceAudioFilename,
+                entry.retainedAudioFilename ?? "",
                 String(entry.promptProvided),
                 String(entry.retryCount),
                 entry.outputCharacterCount.map(String.init) ?? "",
                 entry.errorMessage ?? "",
+                entry.transcriptText ?? "",
                 logs
             ].map(csvEscaped).joined(separator: ",")
         }
@@ -534,7 +663,7 @@ struct SettingsWindowController {
         let hostingController = NSHostingController(rootView: settingsView)
 
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "Notchtalk Settings"
+        window.title = "Notchtalk"
         window.styleMask = [.titled, .closable]
         window.center()
         window.setFrameAutosaveName("SettingsWindow")

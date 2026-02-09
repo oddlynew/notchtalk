@@ -73,7 +73,7 @@ struct NotchView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
 
-                Text("Copied!")
+                Text(stateManager.lastOutputDisposition == .pastedToCursor ? "Pasted!" : "Copied!")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.white)
             }

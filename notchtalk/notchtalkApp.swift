@@ -55,7 +55,7 @@ struct notchtalkApp: App {
 @MainActor
 @Observable
 final class AppController {
-    private let stateManager = NotchStateManager()
+    private let stateManager = NotchStateManager.shared
     private var windowController: NotchWindowController?
     private(set) var hasAccessibilityPermission = false
     private(set) var hasMicrophonePermission = false
@@ -151,7 +151,7 @@ final class AppController {
     func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notchtalk"
-        alert.informativeText = "Press Right ⌘ to start/stop recording.\nPress Esc to cancel recording/transcription.\nTranscription will be copied to clipboard and optionally pasted."
+        alert.informativeText = "Press Right ⌘ to start/stop recording.\nPress Esc to cancel recording/transcription.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
         alert.alertStyle = .informational
         alert.runModal()
     }

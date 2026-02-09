@@ -42,6 +42,8 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
     var retryCount: Int
     var outputCharacterCount: Int?
     var errorMessage: String?
+    var transcriptText: String?
+    var retainedAudioFilename: String?
     var logs: [LogEvent]
 
     init(
@@ -54,6 +56,8 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
         retryCount: Int = 0,
         outputCharacterCount: Int? = nil,
         errorMessage: String? = nil,
+        transcriptText: String? = nil,
+        retainedAudioFilename: String? = nil,
         logs: [LogEvent] = []
     ) {
         self.id = id
@@ -65,6 +69,8 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
         self.retryCount = retryCount
         self.outputCharacterCount = outputCharacterCount
         self.errorMessage = errorMessage
+        self.transcriptText = transcriptText
+        self.retainedAudioFilename = retainedAudioFilename
         self.logs = logs
     }
 }
@@ -97,6 +103,12 @@ final class TranscriptionDiagnosticsStore {
         return appSupport
             .appendingPathComponent("notchtalk", isDirectory: true)
             .appendingPathComponent("transcription_diagnostics.json")
+    }
+
+    private var retainedAudioDirectoryURL: URL {
+        storageURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("retained_audio", isDirectory: true)
     }
 
     private init() {
@@ -145,9 +157,10 @@ final class TranscriptionDiagnosticsStore {
         }
     }
 
-    func markSucceeded(for id: UUID, outputCharacterCount: Int) {
+    func markSucceeded(for id: UUID, transcriptText: String, outputCharacterCount: Int) {
         mutateEntry(id) { entry in
             entry.status = .succeeded
+            entry.transcriptText = transcriptText
             entry.outputCharacterCount = outputCharacterCount
             entry.errorMessage = nil
             entry.logs.append(.init(level: .info, message: "Transcription succeeded"))
@@ -168,6 +181,20 @@ final class TranscriptionDiagnosticsStore {
         }
     }
 
+    func prepareForManualRetry(for id: UUID) {
+        mutateEntry(id) { entry in
+            entry.status = .pending
+            entry.errorMessage = nil
+            entry.retryCount = 0
+            entry.outputCharacterCount = nil
+            entry.transcriptText = nil
+            entry.logs.append(.init(level: .info, message: "Manual re-transcribe requested"))
+            if entry.logs.count > maxLogsPerEntry {
+                entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
+            }
+        }
+    }
+
     func markCancelled(for id: UUID, reason: String) {
         mutateEntry(id) { entry in
             entry.status = .cancelled
@@ -180,8 +207,68 @@ final class TranscriptionDiagnosticsStore {
     }
 
     func clearAll() {
+        for entry in entries {
+            if let retainedURL = retainedAudioURL(for: entry.id) {
+                try? fileManager.removeItem(at: retainedURL)
+            }
+        }
         entries.removeAll()
         persistToDisk()
+    }
+
+    func retainedAudioURL(for id: UUID) -> URL? {
+        guard let entry = entries.first(where: { $0.id == id }) else {
+            return nil
+        }
+        guard let filename = entry.retainedAudioFilename, !filename.isEmpty else {
+            return nil
+        }
+        return retainedAudioDirectoryURL.appendingPathComponent(filename)
+    }
+
+    func retainAudioForManualRetry(sourceURL: URL, for id: UUID) {
+        let fileExtension = sourceURL.pathExtension.isEmpty ? "m4a" : sourceURL.pathExtension
+        let destinationURL = retainedAudioDirectoryURL.appendingPathComponent("\(id.uuidString).\(fileExtension)")
+
+        do {
+            try fileManager.createDirectory(at: retainedAudioDirectoryURL, withIntermediateDirectories: true)
+
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try? fileManager.removeItem(at: destinationURL)
+            }
+
+            do {
+                try fileManager.moveItem(at: sourceURL, to: destinationURL)
+            } catch {
+                // Fallback to copy+remove if move fails.
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+                try? fileManager.removeItem(at: sourceURL)
+            }
+
+            mutateEntry(id) { entry in
+                entry.retainedAudioFilename = destinationURL.lastPathComponent
+                entry.logs.append(.init(level: .warning, message: "Retained audio locally for manual retry"))
+                if entry.logs.count > maxLogsPerEntry {
+                    entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
+                }
+            }
+        } catch {
+            mutateEntry(id) { entry in
+                entry.logs.append(.init(level: .error, message: "Failed to retain audio for retry: \(error.localizedDescription)"))
+                if entry.logs.count > maxLogsPerEntry {
+                    entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
+                }
+            }
+        }
+    }
+
+    func clearRetainedAudio(for id: UUID) {
+        if let retainedURL = retainedAudioURL(for: id) {
+            try? fileManager.removeItem(at: retainedURL)
+        }
+        mutateEntry(id) { entry in
+            entry.retainedAudioFilename = nil
+        }
     }
 
     private func mutateEntry(_ id: UUID, _ mutate: (inout TranscriptionDiagnosticsEntry) -> Void) {

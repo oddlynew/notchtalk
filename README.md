@@ -1,6 +1,6 @@
 # Notchtalk
 
-Minimal macOS menu bar dictation: press a key, speak, get a transcription copied to your clipboard (and optionally auto-pasted).
+Minimal macOS menu bar dictation: press a key, speak, get a transcription pasted at your cursor (without overwriting your clipboard) or copied to the clipboard.
 
 This exists because I got tired of paid dictation wrappers (SuperWhisper, Spokenly, etc.) that felt expensive (often ~$12/month) for comparatively little gain. In a world where you can bring your own API key, I wanted the simplest possible app that talks directly to the OpenAI transcription API, uses a sane default model, and is reliable about retries/timeouts.
 
@@ -16,8 +16,8 @@ Notchtalk is intentionally small. It is not planned to be paid, and it is likely
 - Shows a small “pill” UI near the notch/screen center while active.
 - Stores your OpenAI API key in the macOS Keychain.
 - Lets you set an optional “transcription prompt”.
-- Copies the transcription to the clipboard and can optionally auto-paste (simulated Cmd+V).
-- Keeps local transcription diagnostics (retry events, HTTP status/errors, timings) and can export JSON/CSV.
+- Copies the transcription to the clipboard, or auto-pastes at your cursor without overwriting your clipboard (simulated Cmd+V).
+- Keeps local transcription history (text + per-run diagnostics) and can export JSON/CSV.
 
 ## Models
 
@@ -85,12 +85,12 @@ If you want to distribute builds to other people, you will generally need Apple 
 
 - Tap Right Command (⌘) to start/stop recording.
 - While transcribing, you will see “Transcribing” or “Retrying (n/N)” in the pill UI.
-- On success, Notchtalk copies the transcription to the clipboard and shows “Copied!”.
-- If **Auto-paste** is enabled, it will simulate Cmd+V after copying.
+- On success, if **Auto-paste** is enabled, Notchtalk pastes at your cursor and shows “Pasted!” (your clipboard is restored immediately after).
+- If **Auto-paste** is disabled, Notchtalk copies the transcription to the clipboard and shows “Copied!”.
 
-## Diagnostics
+## History & Diagnostics
 
-Settings -> Diagnostics shows recent transcription runs and log events, including retries and errors. Exports:
+Settings -> History shows recent transcription runs (including the transcribed text) and per-run log events (retries, errors). Exports:
 
 - JSON (machine-readable)
 - CSV (easy to inspect in a spreadsheet)
@@ -103,7 +103,8 @@ Diagnostics are stored locally under:
 
 - Your OpenAI API key is stored in the macOS Keychain.
 - Audio is recorded locally, written to a temporary `.m4a`, and uploaded to OpenAI for transcription.
-- Diagnostics (metadata + logs) are stored locally; they are not uploaded anywhere by Notchtalk.
+- Transcription history (text + metadata + logs) is stored locally; it is not uploaded anywhere by Notchtalk.
+- If a transcription fails after retries, Notchtalk can retain the audio locally to allow manual re-transcribe.
 
 ## Development
 
@@ -131,4 +132,3 @@ Issues and pull requests are welcome, especially around:
 - making builds more portable across macOS versions
 - robustness around permissions and error states
 - improving the signing/notarization story for reproducible installs
-

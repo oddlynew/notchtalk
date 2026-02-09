@@ -13,14 +13,22 @@ enum AppState: Equatable, Sendable {
     case error(String)
 }
 
+enum OutputDisposition: Equatable, Sendable {
+    case copiedToClipboard
+    case pastedToCursor
+}
+
 @MainActor
 @Observable
 final class NotchStateManager {
+    static let shared = NotchStateManager()
+
     var state: AppState = .idle
     var audioLevel: CGFloat = 0.0
     var recordingDuration: TimeInterval = 0
     var retryAttempt: Int?
     var totalRetries = 0
+    var lastOutputDisposition: OutputDisposition?
 
     var processingStatusText: String {
         if let retryAttempt, totalRetries > 0 {
@@ -131,12 +139,18 @@ final class NotchStateManager {
 
                 guard !Task.isCancelled else { return }
 
-                diagnosticsStore.markSucceeded(for: diagnosticsID, outputCharacterCount: transcription.count)
+                diagnosticsStore.markSucceeded(
+                    for: diagnosticsID,
+                    transcriptText: transcription,
+                    outputCharacterCount: transcription.count
+                )
 
                 // Copy to clipboard and optionally paste
                 if SettingsManager.shared.autoPasteEnabled {
-                    ClipboardService.copyAndPaste(transcription)
+                    lastOutputDisposition = .pastedToCursor
+                    ClipboardService.pastePreservingClipboard(transcription)
                 } else {
+                    lastOutputDisposition = .copiedToClipboard
                     ClipboardService.copy(transcription)
                 }
 
@@ -175,9 +189,12 @@ final class NotchStateManager {
                 state = .error(errorMessage)
                 SoundManager.shared.playErrorSound()
 
-                // Clean up on error too
                 if let url = currentRecordingURL {
-                    audioRecorder.deleteRecording(at: url)
+                    if SettingsManager.shared.retainFailedRecordingsEnabled {
+                        diagnosticsStore.retainAudioForManualRetry(sourceURL: url, for: diagnosticsID)
+                    } else {
+                        audioRecorder.deleteRecording(at: url)
+                    }
                 }
 
                 activeDiagnosticsID = nil
@@ -211,11 +228,108 @@ final class NotchStateManager {
         retryAttempt = nil
         totalRetries = 0
         currentRecordingURL = nil
+        lastOutputDisposition = nil
     }
 
     func retry() {
         if case .error = state {
             stopRecording()
+        }
+    }
+
+    func retranscribe(diagnosticsID: UUID) {
+        if case .recording = state {
+            return
+        }
+        if case .processing = state {
+            return
+        }
+
+        guard let retainedAudioURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID) else {
+            state = .error("No audio")
+            SoundManager.shared.playErrorSound()
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                reset()
+            }
+            return
+        }
+
+        if !FileManager.default.fileExists(atPath: retainedAudioURL.path) {
+            state = .error("Missing audio")
+            SoundManager.shared.playErrorSound()
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                reset()
+            }
+            return
+        }
+
+        state = .processing
+        retryAttempt = nil
+        totalRetries = 0
+        currentRecordingURL = retainedAudioURL
+        activeDiagnosticsID = diagnosticsID
+
+        diagnosticsStore.prepareForManualRetry(for: diagnosticsID)
+
+        let prompt = SettingsManager.shared.transcriptionPrompt.isEmpty
+            ? nil
+            : SettingsManager.shared.transcriptionPrompt
+
+        processingTask?.cancel()
+        processingTask = Task {
+            do {
+                let transcription = try await transcriptionService.transcribe(
+                    audioURL: retainedAudioURL,
+                    prompt: prompt,
+                    onRetry: { [weak self] attempt, totalRetries in
+                        self?.retryAttempt = attempt
+                        self?.totalRetries = totalRetries
+                        self?.diagnosticsStore.registerRetry(attempt: attempt, total: totalRetries, for: diagnosticsID)
+                    },
+                    onLog: { [weak self] message, level in
+                        self?.diagnosticsStore.log(message, level: level, for: diagnosticsID)
+                    }
+                )
+
+                guard !Task.isCancelled else { return }
+
+                diagnosticsStore.markSucceeded(
+                    for: diagnosticsID,
+                    transcriptText: transcription,
+                    outputCharacterCount: transcription.count
+                )
+
+                if SettingsManager.shared.autoPasteEnabled {
+                    lastOutputDisposition = .pastedToCursor
+                    ClipboardService.pastePreservingClipboard(transcription)
+                } else {
+                    lastOutputDisposition = .copiedToClipboard
+                    ClipboardService.copy(transcription)
+                }
+
+                state = .done
+                diagnosticsStore.clearRetainedAudio(for: diagnosticsID)
+                activeDiagnosticsID = nil
+
+                try? await Task.sleep(for: .seconds(1.2))
+
+                guard !Task.isCancelled else { return }
+                reset()
+            } catch {
+                guard !Task.isCancelled else { return }
+
+                diagnosticsStore.markFailed(for: diagnosticsID, message: error.localizedDescription)
+                state = .error("Failed")
+                SoundManager.shared.playErrorSound()
+                activeDiagnosticsID = nil
+
+                try? await Task.sleep(for: .seconds(3))
+
+                guard !Task.isCancelled else { return }
+                reset()
+            }
         }
     }
 }

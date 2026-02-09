@@ -21,10 +21,16 @@ final class SettingsManager {
             UserDefaults.standard.set(autoPasteEnabled, forKey: "autoPasteEnabled")
         }
     }
+    var retainFailedRecordingsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(retainFailedRecordingsEnabled, forKey: "retainFailedRecordingsEnabled")
+        }
+    }
 
     private init() {
         self.transcriptionPrompt = UserDefaults.standard.string(forKey: "transcriptionPrompt") ?? ""
         self.autoPasteEnabled = UserDefaults.standard.bool(forKey: "autoPasteEnabled")
+        self.retainFailedRecordingsEnabled = (UserDefaults.standard.object(forKey: "retainFailedRecordingsEnabled") as? Bool) ?? true
         self.hasAPIKey = KeychainService.hasAPIKey
     }
 
