@@ -17,6 +17,7 @@ actor OpenAITranscriptionService {
     private let endpoint = URL(string: "https://api.openai.com/v1/audio/transcriptions")!
     private let model = OpenAITranscriptionService.primaryModelName
     private let fallbackModel: String?
+    private let uploadNoProgressTimeoutSeconds: TimeInterval
     private let requestTimeoutCeiling: TimeInterval
     private let overallTimeoutCeiling: TimeInterval
     private let overallTimeoutFloor: TimeInterval
@@ -42,6 +43,7 @@ actor OpenAITranscriptionService {
         overallTimeoutCeiling: TimeInterval = 120,
         overallTimeoutMultiplier: Double = 2.0,
         fallbackModel: String? = nil,
+        uploadNoProgressTimeoutSeconds: TimeInterval = 6,
         requestTimeoutCeiling: TimeInterval = 180,
         metricsSlowThresholdSeconds: TimeInterval = 8,
         fallbackGraceSeconds: TimeInterval = 2,
@@ -54,7 +56,18 @@ actor OpenAITranscriptionService {
         apiKeyProvider: @escaping APIKeyProvider = { KeychainService.getAPIKey() },
         randomDouble: @escaping @Sendable () -> Double = { Double.random(in: 0...1) },
         upload: @escaping UploadFunction = { request, bodyURL, delegate in
-            try await URLSession.shared.upload(for: request, fromFile: bodyURL, delegate: delegate)
+            // Use an isolated ephemeral session per request to reduce the chance of hitting a stale/broken
+            // reused connection (observed as proto=h3 with 0B sent/recv in diagnostics).
+            let config = URLSessionConfiguration.ephemeral
+            config.waitsForConnectivity = false
+            config.timeoutIntervalForRequest = request.timeoutInterval
+            config.timeoutIntervalForResource = request.timeoutInterval
+
+            let session = URLSession(configuration: config)
+            defer {
+                session.finishTasksAndInvalidate()
+            }
+            return try await session.upload(for: request, fromFile: bodyURL, delegate: delegate)
         }
     ) {
         self.maxTimeoutRetries = max(0, maxTimeoutRetries)
@@ -64,6 +77,7 @@ actor OpenAITranscriptionService {
         self.overallTimeoutCeiling = max(0, overallTimeoutCeiling)
         self.overallTimeoutFloor = max(0, min(overallTimeoutFloor, overallTimeoutCeiling))
         self.overallTimeoutMultiplier = max(0, overallTimeoutMultiplier)
+        self.uploadNoProgressTimeoutSeconds = max(0, uploadNoProgressTimeoutSeconds)
         self.requestTimeoutCeiling = max(5, requestTimeoutCeiling)
         self.metricsSlowThresholdSeconds = max(0, metricsSlowThresholdSeconds)
         self.fallbackGraceSeconds = max(0, fallbackGraceSeconds)
@@ -96,6 +110,7 @@ actor OpenAITranscriptionService {
     private final class TaskMetricsCollector: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         private let lock = NSLock()
         private var _metrics: URLSessionTaskMetrics?
+        private var _sentRequestBodyBytes: Int64 = 0
 
         var metrics: URLSessionTaskMetrics? {
             lock.lock()
@@ -103,9 +118,35 @@ actor OpenAITranscriptionService {
             return _metrics
         }
 
+        var sentRequestBodyBytes: Int64 {
+            lock.lock()
+            defer { lock.unlock() }
+            return _sentRequestBodyBytes
+        }
+
+        var hasSentAnyRequestBodyBytes: Bool {
+            sentRequestBodyBytes > 0
+        }
+
         func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
             lock.lock()
             _metrics = metrics
+            lock.unlock()
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            didSendBodyData bytesSent: Int64,
+            totalBytesSent: Int64,
+            totalBytesExpectedToSend: Int64
+        ) {
+            guard bytesSent > 0 || totalBytesSent > 0 else {
+                return
+            }
+
+            lock.lock()
+            _sentRequestBodyBytes = max(_sentRequestBodyBytes, totalBytesSent)
             lock.unlock()
         }
     }
@@ -771,6 +812,8 @@ actor OpenAITranscriptionService {
         request.timeoutInterval = requestTimeoutCeiling
 
         let metricsCollector = TaskMetricsCollector()
+        let uploadNoProgressTimeoutSeconds = self.uploadNoProgressTimeoutSeconds
+        let upload = self.upload
         let inFlightAtStart = incrementInFlightRequests()
         let startTime = Date()
         let bodyBytes = fileSizeBytes(at: bodyURL)
@@ -782,7 +825,52 @@ actor OpenAITranscriptionService {
 
         let (data, response): (Data, URLResponse)
         do {
-            (data, response) = try await upload(request, bodyURL, metricsCollector)
+            let noProgressTimeout = min(
+                uploadNoProgressTimeoutSeconds,
+                max(0, request.timeoutInterval - 1)
+            )
+
+            (data, response) = try await withThrowingTaskGroup(
+                of: (Data, URLResponse).self,
+                returning: (Data, URLResponse).self
+            ) { group in
+                group.addTask {
+                    try await upload(request, bodyURL, metricsCollector)
+                }
+
+                if noProgressTimeout > 0 {
+                    group.addTask {
+                        try await Task.sleep(for: .seconds(noProgressTimeout))
+
+                        // If we're still at 0B sent, we're almost certainly stuck in connection setup
+                        // (seen as proto=h3 with 0B sent/recv). Cancel quickly and let retry logic
+                        // start a fresh attempt.
+                        if !metricsCollector.hasSentAnyRequestBodyBytes {
+                            await onLog?(
+                                "[\(requestID)] No upload progress (sent=0B) after \(Int(round(noProgressTimeout)))s (\(modelName)); cancelling attempt",
+                                .warning
+                            )
+                            throw TranscriptionError.timeout
+                        }
+
+                        while !Task.isCancelled {
+                            try await Task.sleep(for: .seconds(1))
+                        }
+                        throw CancellationError()
+                    }
+                }
+
+                do {
+                    guard let first = try await group.next() else {
+                        throw URLError(.unknown)
+                    }
+                    group.cancelAll()
+                    return first
+                } catch {
+                    group.cancelAll()
+                    throw error
+                }
+            }
         } catch {
             let elapsed = Date().timeIntervalSince(startTime)
             let inFlightAfter = decrementInFlightRequests()
