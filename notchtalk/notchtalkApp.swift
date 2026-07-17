@@ -8,6 +8,7 @@
 import SwiftUI
 
 @main
+@MainActor
 struct notchtalkApp: App {
     @State private var appController = AppController()
 

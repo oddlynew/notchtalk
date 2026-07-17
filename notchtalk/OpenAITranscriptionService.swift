@@ -829,13 +829,14 @@ actor OpenAITranscriptionService {
                 uploadNoProgressTimeoutSeconds,
                 max(0, request.timeoutInterval - 1)
             )
+            let uploadRequest = request
 
             (data, response) = try await withThrowingTaskGroup(
                 of: (Data, URLResponse).self,
                 returning: (Data, URLResponse).self
             ) { group in
                 group.addTask {
-                    try await upload(request, bodyURL, metricsCollector)
+                    try await upload(uploadRequest, bodyURL, metricsCollector)
                 }
 
                 if noProgressTimeout > 0 {

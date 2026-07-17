@@ -7,6 +7,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
 struct SettingsView: View {
     enum SettingsTab: Hashable {
         case history
@@ -557,7 +558,7 @@ struct SettingsView: View {
                 entry.errorMessage ?? "",
                 entry.transcriptText ?? "",
                 logs
-            ].map(csvEscaped).joined(separator: ",")
+            ].map { csvEscaped($0) }.joined(separator: ",")
         }
 
         return ([header] + rows).joined(separator: "\n")
@@ -676,6 +677,8 @@ struct SettingsWindowController {
     }
 }
 
+#if DEBUG
 #Preview {
     SettingsView()
 }
+#endif

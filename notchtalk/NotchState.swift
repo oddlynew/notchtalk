@@ -84,6 +84,7 @@ final class NotchStateManager {
 
         state = .recording
         recordingDuration = 0
+        AudioDuckingService.shared.beginDucking()
         SoundManager.shared.playStartSound()
 
         recordingTask = Task {
@@ -97,6 +98,7 @@ final class NotchStateManager {
                 }
             } catch {
                 await MainActor.run {
+                    AudioDuckingService.shared.endDucking()
                     self.state = .error("Mic error")
                     SoundManager.shared.playErrorSound()
                 }
@@ -109,9 +111,11 @@ final class NotchStateManager {
         recordingTask = nil
 
         guard let recordingURL = audioRecorder.stopRecording() else {
+            AudioDuckingService.shared.endDucking()
             state = .error("No recording")
             return
         }
+        AudioDuckingService.shared.endDucking()
 
         currentRecordingURL = recordingURL
         let capturedRecordingDuration = recordingDuration
@@ -330,11 +334,13 @@ final class NotchStateManager {
         processingTask?.cancel()
         processingTask = nil
         audioRecorder.cancelRecording()
+        AudioDuckingService.shared.endDucking()
         stopProcessingTimer()
         reset()
     }
 
     func reset() {
+        AudioDuckingService.shared.endDucking()
         stopProcessingTimer()
         state = .idle
         audioLevel = 0

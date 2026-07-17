@@ -5,6 +5,7 @@
 
 import SwiftUI
 
+@MainActor
 struct NotchView: View {
     let stateManager: NotchStateManager
 
