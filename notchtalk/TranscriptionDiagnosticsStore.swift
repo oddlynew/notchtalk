@@ -38,12 +38,15 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
     var updatedAt: Date
     var status: Status
     var sourceAudioFilename: String
+    var provider: TranscriptionProvider?
+    var speakerRecognitionEnabled: Bool?
     var promptProvided: Bool
     var retryCount: Int
     var outputCharacterCount: Int?
     var errorMessage: String?
     var transcriptText: String?
     var retainedAudioFilename: String?
+    var retainedAudioExpiresAt: Date?
     var logs: [LogEvent]
 
     init(
@@ -52,12 +55,15 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
         updatedAt: Date = Date(),
         status: Status,
         sourceAudioFilename: String,
+        provider: TranscriptionProvider? = nil,
+        speakerRecognitionEnabled: Bool? = nil,
         promptProvided: Bool,
         retryCount: Int = 0,
         outputCharacterCount: Int? = nil,
         errorMessage: String? = nil,
         transcriptText: String? = nil,
         retainedAudioFilename: String? = nil,
+        retainedAudioExpiresAt: Date? = nil,
         logs: [LogEvent] = []
     ) {
         self.id = id
@@ -65,12 +71,15 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
         self.updatedAt = updatedAt
         self.status = status
         self.sourceAudioFilename = sourceAudioFilename
+        self.provider = provider
+        self.speakerRecognitionEnabled = speakerRecognitionEnabled
         self.promptProvided = promptProvided
         self.retryCount = retryCount
         self.outputCharacterCount = outputCharacterCount
         self.errorMessage = errorMessage
         self.transcriptText = transcriptText
         self.retainedAudioFilename = retainedAudioFilename
+        self.retainedAudioExpiresAt = retainedAudioExpiresAt
         self.logs = logs
     }
 }
@@ -82,10 +91,15 @@ final class TranscriptionDiagnosticsStore {
 
     private(set) var entries: [TranscriptionDiagnosticsEntry] = []
 
-    private let maxEntries = 250
+    static let recordingRetentionInterval: TimeInterval = 24 * 60 * 60
+
+    private let maxEntries: Int
     // Metrics logging can add several lines per attempt; keep enough history to diagnose tail latency.
     private let maxLogsPerEntry = 200
     private let fileManager = FileManager.default
+    private let storageOverrideURL: URL?
+    private let retentionInterval: TimeInterval
+    private var cleanupTask: Task<Void, Never>?
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -99,6 +113,9 @@ final class TranscriptionDiagnosticsStore {
     }()
 
     private var storageURL: URL {
+        if let storageOverrideURL {
+            return storageOverrideURL
+        }
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
         return appSupport
@@ -112,11 +129,26 @@ final class TranscriptionDiagnosticsStore {
             .appendingPathComponent("retained_audio", isDirectory: true)
     }
 
-    private init() {
+    init(
+        storageURL: URL? = nil,
+        maxEntries: Int = 250,
+        retentionInterval: TimeInterval = TranscriptionDiagnosticsStore.recordingRetentionInterval,
+        now: Date = Date()
+    ) {
+        self.storageOverrideURL = storageURL
+        self.maxEntries = max(1, maxEntries)
+        self.retentionInterval = retentionInterval
         loadFromDisk()
+        purgeExpiredRetainedAudio(now: now)
     }
 
-    func startTranscription(audioURL: URL, prompt: String?) -> UUID {
+    func startTranscription(
+        audioURL: URL,
+        prompt: String?,
+        provider: TranscriptionProvider = .openAI,
+        speakerRecognitionEnabled: Bool = false
+    ) -> UUID {
+        purgeExpiredRetainedAudio()
         let now = Date()
         let id = UUID()
 
@@ -126,6 +158,8 @@ final class TranscriptionDiagnosticsStore {
             updatedAt: now,
             status: .pending,
             sourceAudioFilename: audioURL.lastPathComponent,
+            provider: provider,
+            speakerRecognitionEnabled: provider == .elevenLabs ? speakerRecognitionEnabled : false,
             promptProvided: !(prompt?.isEmpty ?? true),
             logs: [
                 .init(level: .info, message: "Transcription created"),
@@ -158,9 +192,21 @@ final class TranscriptionDiagnosticsStore {
         }
     }
 
-    func markSucceeded(for id: UUID, transcriptText: String, outputCharacterCount: Int) {
+    func markSucceeded(
+        for id: UUID,
+        transcriptText: String,
+        outputCharacterCount: Int,
+        provider: TranscriptionProvider? = nil,
+        speakerRecognitionEnabled: Bool? = nil,
+        promptProvided: Bool? = nil
+    ) {
         mutateEntry(id) { entry in
             entry.status = .succeeded
+            if let provider {
+                entry.provider = provider
+                entry.speakerRecognitionEnabled = provider == .elevenLabs ? (speakerRecognitionEnabled ?? false) : false
+                entry.promptProvided = provider == .openAI && (promptProvided ?? false)
+            }
             entry.transcriptText = transcriptText
             entry.outputCharacterCount = outputCharacterCount
             entry.errorMessage = nil
@@ -187,8 +233,6 @@ final class TranscriptionDiagnosticsStore {
             entry.status = .pending
             entry.errorMessage = nil
             entry.retryCount = 0
-            entry.outputCharacterCount = nil
-            entry.transcriptText = nil
             entry.logs.append(.init(level: .info, message: "Manual re-transcribe requested"))
             if entry.logs.count > maxLogsPerEntry {
                 entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
@@ -209,7 +253,8 @@ final class TranscriptionDiagnosticsStore {
 
     func clearAll() {
         for entry in entries {
-            if let retainedURL = retainedAudioURL(for: entry.id) {
+            if let filename = entry.retainedAudioFilename, !filename.isEmpty {
+                let retainedURL = retainedAudioDirectoryURL.appendingPathComponent(filename)
                 try? fileManager.removeItem(at: retainedURL)
             }
         }
@@ -218,16 +263,23 @@ final class TranscriptionDiagnosticsStore {
     }
 
     func retainedAudioURL(for id: UUID) -> URL? {
-        guard let entry = entries.first(where: { $0.id == id }) else {
+        guard let index = entries.firstIndex(where: { $0.id == id }) else {
             return nil
         }
+        let entry = entries[index]
         guard let filename = entry.retainedAudioFilename, !filename.isEmpty else {
+            return nil
+        }
+        let expiresAt = entry.retainedAudioExpiresAt
+            ?? entry.createdAt.addingTimeInterval(retentionInterval)
+        guard expiresAt > Date() else {
             return nil
         }
         return retainedAudioDirectoryURL.appendingPathComponent(filename)
     }
 
-    func retainAudioForManualRetry(sourceURL: URL, for id: UUID) {
+    @discardableResult
+    func retainAudio(sourceURL: URL, for id: UUID, now: Date = Date()) -> URL? {
         let fileExtension = sourceURL.pathExtension.isEmpty ? "m4a" : sourceURL.pathExtension
         let destinationURL = retainedAudioDirectoryURL.appendingPathComponent("\(id.uuidString).\(fileExtension)")
 
@@ -248,11 +300,14 @@ final class TranscriptionDiagnosticsStore {
 
             mutateEntry(id) { entry in
                 entry.retainedAudioFilename = destinationURL.lastPathComponent
-                entry.logs.append(.init(level: .warning, message: "Retained audio locally for manual retry"))
+                entry.retainedAudioExpiresAt = now.addingTimeInterval(retentionInterval)
+                entry.logs.append(.init(level: .info, message: "Retained audio locally for 24 hours"))
                 if entry.logs.count > maxLogsPerEntry {
                     entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
                 }
             }
+            scheduleNextCleanup(now: now)
+            return destinationURL
         } catch {
             mutateEntry(id) { entry in
                 entry.logs.append(.init(level: .error, message: "Failed to retain audio for retry: \(error.localizedDescription)"))
@@ -260,15 +315,69 @@ final class TranscriptionDiagnosticsStore {
                     entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
                 }
             }
+            return nil
         }
     }
 
-    func clearRetainedAudio(for id: UUID) {
-        if let retainedURL = retainedAudioURL(for: id) {
+    func purgeExpiredRetainedAudio(now: Date = Date()) {
+        var changed = false
+
+        for index in entries.indices {
+            guard let filename = entries[index].retainedAudioFilename, !filename.isEmpty else {
+                continue
+            }
+
+            let expiresAt = entries[index].retainedAudioExpiresAt
+                ?? entries[index].createdAt.addingTimeInterval(retentionInterval)
+            guard expiresAt <= now else {
+                continue
+            }
+
+            let retainedURL = retainedAudioDirectoryURL.appendingPathComponent(filename)
             try? fileManager.removeItem(at: retainedURL)
+            entries[index].retainedAudioFilename = nil
+            entries[index].retainedAudioExpiresAt = nil
+            entries[index].logs.append(.init(level: .info, message: "Deleted retained audio after 24 hours"))
+            if entries[index].logs.count > maxLogsPerEntry {
+                entries[index].logs.removeFirst(entries[index].logs.count - maxLogsPerEntry)
+            }
+            entries[index].updatedAt = now
+            changed = true
         }
-        mutateEntry(id) { entry in
-            entry.retainedAudioFilename = nil
+
+        let trimmed = trimIfNeeded(now: now)
+        if changed || trimmed {
+            persistToDisk()
+        }
+        scheduleNextCleanup(now: now)
+    }
+
+    private func scheduleNextCleanup(now: Date = Date()) {
+        cleanupTask?.cancel()
+
+        let nextExpiration = entries.compactMap { entry -> Date? in
+            guard entry.retainedAudioFilename != nil else { return nil }
+            return entry.retainedAudioExpiresAt
+                ?? entry.createdAt.addingTimeInterval(retentionInterval)
+        }
+        .min()
+
+        guard let nextExpiration else {
+            cleanupTask = nil
+            return
+        }
+
+        let delay = max(0, nextExpiration.timeIntervalSince(now))
+        cleanupTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+
+            guard let self else { return }
+            self.cleanupTask = nil
+            self.purgeExpiredRetainedAudio()
         }
     }
 
@@ -282,10 +391,32 @@ final class TranscriptionDiagnosticsStore {
         persistToDisk()
     }
 
-    private func trimIfNeeded() {
-        if entries.count > maxEntries {
-            entries.removeLast(entries.count - maxEntries)
+    @discardableResult
+    private func trimIfNeeded(now: Date = Date()) -> Bool {
+        guard entries.count > maxEntries else { return false }
+
+        var removedEntry = false
+        var index = entries.count - 1
+        while entries.count > maxEntries, index >= 0 {
+            let entry = entries[index]
+            let expiration = entry.retainedAudioExpiresAt
+                ?? entry.createdAt.addingTimeInterval(retentionInterval)
+            let ownsUnexpiredAudio = entry.retainedAudioFilename != nil && expiration > now
+            let isRecentPendingEntry = entry.status == .pending && expiration > now
+            let canRemove = !isRecentPendingEntry && !ownsUnexpiredAudio
+
+            if canRemove {
+                if let filename = entry.retainedAudioFilename, !filename.isEmpty {
+                    let retainedURL = retainedAudioDirectoryURL.appendingPathComponent(filename)
+                    try? fileManager.removeItem(at: retainedURL)
+                }
+                entries.remove(at: index)
+                removedEntry = true
+            }
+            index -= 1
         }
+
+        return removedEntry
     }
 
     private func loadFromDisk() {

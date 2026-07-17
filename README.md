@@ -14,25 +14,28 @@ Notchtalk is intentionally small. It is not planned to be paid, and it is likely
   - Tap **Right Command (⌘)** again to stop and transcribe.
   - Press **Esc** to cancel recording/transcription.
 - Shows a small “pill” UI near the notch/screen center while active.
-- Stores your OpenAI API key in the macOS Keychain.
+- Lets you choose OpenAI or ElevenLabs Scribe v2 as the transcription provider.
+- Stores provider API keys separately in the macOS Keychain.
+- Can add speaker labels to ElevenLabs transcripts using optional speaker recognition.
 - Lets you set an optional “transcription prompt”.
 - Copies the transcription to the clipboard, or auto-pastes at your cursor without overwriting your clipboard (simulated Cmd+V).
 - Keeps local transcription history (text + per-run diagnostics) and can export JSON/CSV.
 
 ## Models
 
-Notchtalk is opinionated on purpose:
+Notchtalk keeps provider choices intentionally small:
 
-- Primary model: `gpt-4o-transcribe`
-- Fallback model (hedged): `gpt-4o-mini-transcribe`
+- OpenAI primary: `gpt-4o-transcribe`
+- OpenAI fallback (hedged): `gpt-4o-mini-transcribe`
+- ElevenLabs: `scribe_v2`, with optional speaker diarization
 
-There is no “model picker” UI. The goal is “works well by default” rather than “a huge dropdown”.
+There is a provider picker, but no model picker. The goal is “works well by default” rather than “a huge dropdown”.
 
 ## Requirements
 
 - macOS `26.2+` (current Xcode project deployment target)
 - Xcode (recent enough to build for macOS 26)
-- An OpenAI API key (usage is billed by OpenAI; Notchtalk does not add any subscription layer)
+- An API key for the selected provider (usage is billed by OpenAI or ElevenLabs; Notchtalk does not add any subscription layer)
 - Permissions:
   - Microphone (to record)
   - Accessibility (for the global hotkey event tap and for auto-paste)
@@ -48,7 +51,7 @@ There is no “model picker” UI. The goal is “works well by default” rathe
      - If needed, change the **Bundle Identifier** to something unique.
 4. Select the `notchtalk` scheme and run.
 5. When prompted, grant Microphone permission. If the hotkey does not work, grant Accessibility permission.
-6. Open **Settings...** from the menu bar icon and paste your OpenAI API key.
+6. Open **Settings...** from the menu bar icon, choose a provider, and paste its API key.
 
 ## Build A Release And Install To /Applications
 
@@ -81,6 +84,16 @@ cp -R /path/to/DerivedData/Build/Products/Release/notchtalk.app /Applications/
 
 If you want to distribute builds to other people, you will generally need Apple Developer Program membership, a Developer ID Application certificate, and notarization. (That’s outside the scope of this repo right now.)
 
+### Command Line Tools Only
+
+For a local build with Apple Command Line Tools, stable ad-hoc signing, installation to `/Applications`, and launch:
+
+```bash
+./script/build_and_run.sh
+```
+
+Use `./script/build_and_run.sh --verify` to launch and verify that the process stays running.
+
 ## Usage
 
 - Tap Right Command (⌘) to start/stop recording.
@@ -101,10 +114,11 @@ Diagnostics are stored locally under:
 
 ## Privacy Notes
 
-- Your OpenAI API key is stored in the macOS Keychain.
-- Audio is recorded locally, written to a temporary `.m4a`, and uploaded to OpenAI for transcription.
+- OpenAI and ElevenLabs API keys are stored separately in the macOS Keychain.
+- Audio is recorded locally, written to an `.m4a`, and uploaded only to the provider selected in Settings.
 - Transcription history (text + metadata + logs) is stored locally; it is not uploaded anywhere by Notchtalk.
-- If a transcription fails after retries, Notchtalk can retain the audio locally to allow manual re-transcribe.
+- Completed recordings are retained locally for 24 hours to allow manual re-transcription, then deleted automatically.
+- ElevenLabs speaker recognition sends `diarize=true` and formats returned speaker IDs as readable speaker-labelled paragraphs.
 
 ## Development
 

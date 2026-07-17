@@ -7,9 +7,10 @@ import Foundation
 import Security
 
 enum KeychainService: Sendable {
-    nonisolated static func saveAPIKey(_ apiKey: String) throws {
-        let serviceName = "oddlynew.notchtalk"
-        let apiKeyAccount = "openai-api-key"
+    private nonisolated static let serviceName = "oddlynew.notchtalk"
+
+    nonisolated static func saveAPIKey(_ apiKey: String, for provider: TranscriptionProvider = .openAI) throws {
+        let apiKeyAccount = provider.apiKeyAccount
         let data = Data(apiKey.utf8)
 
         // Delete existing item first
@@ -35,9 +36,8 @@ enum KeychainService: Sendable {
         }
     }
 
-    nonisolated static func getAPIKey() -> String? {
-        let serviceName = "oddlynew.notchtalk"
-        let apiKeyAccount = "openai-api-key"
+    nonisolated static func getAPIKey(for provider: TranscriptionProvider = .openAI) -> String? {
+        let apiKeyAccount = provider.apiKeyAccount
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -59,9 +59,8 @@ enum KeychainService: Sendable {
         return apiKey
     }
 
-    nonisolated static func deleteAPIKey() throws {
-        let serviceName = "oddlynew.notchtalk"
-        let apiKeyAccount = "openai-api-key"
+    nonisolated static func deleteAPIKey(for provider: TranscriptionProvider = .openAI) throws {
+        let apiKeyAccount = provider.apiKeyAccount
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -76,7 +75,11 @@ enum KeychainService: Sendable {
     }
 
     nonisolated static var hasAPIKey: Bool {
-        getAPIKey() != nil
+        hasAPIKey(for: .openAI)
+    }
+
+    nonisolated static func hasAPIKey(for provider: TranscriptionProvider) -> Bool {
+        getAPIKey(for: provider) != nil
     }
 }
 

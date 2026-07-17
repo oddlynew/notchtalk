@@ -45,7 +45,8 @@ final class NotchStateManager {
     private var processingTask: Task<Void, Never>?
     private var processingTimerTask: Task<Void, Never>?
     private let audioRecorder = AudioRecorder()
-    private let transcriptionService = OpenAITranscriptionService(fallbackModel: "gpt-4o-mini-transcribe")
+    private let openAITranscriptionService = OpenAITranscriptionService(fallbackModel: "gpt-4o-mini-transcribe")
+    private let elevenLabsTranscriptionService = ElevenLabsTranscriptionService()
     private let diagnosticsStore = TranscriptionDiagnosticsStore.shared
     private var currentRecordingURL: URL?
     private var currentRecordingDuration: TimeInterval?
@@ -71,7 +72,8 @@ final class NotchStateManager {
     }
 
     func startRecording() {
-        guard KeychainService.hasAPIKey else {
+        let provider = SettingsManager.shared.transcriptionProvider
+        guard KeychainService.hasAPIKey(for: provider) else {
             state = .error("No API key")
             SettingsWindowController.show()
 
@@ -126,19 +128,34 @@ final class NotchStateManager {
         processingElapsed = 0
         SoundManager.shared.playStopSound()
 
-        let prompt = SettingsManager.shared.transcriptionPrompt.isEmpty
-            ? nil
-            : SettingsManager.shared.transcriptionPrompt
-        let diagnosticsID = diagnosticsStore.startTranscription(audioURL: recordingURL, prompt: prompt)
+        let provider = SettingsManager.shared.transcriptionProvider
+        let speakerRecognitionEnabled = provider == .elevenLabs
+            && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled
+        let prompt = provider == .openAI && !SettingsManager.shared.transcriptionPrompt.isEmpty
+            ? SettingsManager.shared.transcriptionPrompt
+            : nil
+        let diagnosticsID = diagnosticsStore.startTranscription(
+            audioURL: recordingURL,
+            prompt: prompt,
+            provider: provider,
+            speakerRecognitionEnabled: speakerRecognitionEnabled
+        )
+        let transcriptionAudioURL = diagnosticsStore.retainAudio(
+            sourceURL: recordingURL,
+            for: diagnosticsID
+        ) ?? recordingURL
+        currentRecordingURL = transcriptionAudioURL
         activeDiagnosticsID = diagnosticsID
         diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
         startProcessingTimer()
 
         processingTask = Task {
             do {
-                let transcription = try await transcriptionService.transcribe(
-                    audioURL: recordingURL,
+                let transcription = try await transcribe(
+                    audioURL: transcriptionAudioURL,
                     prompt: prompt,
+                    provider: provider,
+                    speakerRecognitionEnabled: speakerRecognitionEnabled,
                     audioDuration: capturedRecordingDuration,
                     onRetry: { [weak self] attempt, totalRetries in
                         self?.retryAttempt = attempt
@@ -155,7 +172,10 @@ final class NotchStateManager {
                 diagnosticsStore.markSucceeded(
                     for: diagnosticsID,
                     transcriptText: transcription,
-                    outputCharacterCount: transcription.count
+                    outputCharacterCount: transcription.count,
+                    provider: provider,
+                    speakerRecognitionEnabled: speakerRecognitionEnabled,
+                    promptProvided: prompt != nil
                 )
 
                 // Copy to clipboard and optionally paste
@@ -169,8 +189,7 @@ final class NotchStateManager {
 
                 state = .done
 
-                // Clean up the recording file
-                audioRecorder.deleteRecording(at: recordingURL)
+                retainRecordingIfNeeded(transcriptionAudioURL, diagnosticsID: diagnosticsID)
                 activeDiagnosticsID = nil
                 stopProcessingTimer()
 
@@ -205,11 +224,7 @@ final class NotchStateManager {
                 stopProcessingTimer()
 
                 if let url = currentRecordingURL {
-                    if SettingsManager.shared.retainFailedRecordingsEnabled {
-                        diagnosticsStore.retainAudioForManualRetry(sourceURL: url, for: diagnosticsID)
-                    } else {
-                        audioRecorder.deleteRecording(at: url)
-                    }
+                    retainRecordingIfNeeded(url, diagnosticsID: diagnosticsID)
                 }
 
                 activeDiagnosticsID = nil
@@ -249,20 +264,25 @@ final class NotchStateManager {
         totalRetries = 0
         processingElapsed = 0
         diagnosticsStore.log("User requested retry; cancelling in-flight request", level: .warning, for: diagnosticsID)
+        let provider = SettingsManager.shared.transcriptionProvider
+        let speakerRecognitionEnabled = provider == .elevenLabs
+            && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled
+        let prompt = provider == .openAI && !SettingsManager.shared.transcriptionPrompt.isEmpty
+            ? SettingsManager.shared.transcriptionPrompt
+            : nil
         diagnosticsStore.prepareForManualRetry(for: diagnosticsID)
         diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
         startProcessingTimer()
 
-        let prompt = SettingsManager.shared.transcriptionPrompt.isEmpty
-            ? nil
-            : SettingsManager.shared.transcriptionPrompt
         let capturedDuration = currentRecordingDuration
 
         processingTask = Task {
             do {
-                let transcription = try await transcriptionService.transcribe(
+                let transcription = try await transcribe(
                     audioURL: url,
                     prompt: prompt,
+                    provider: provider,
+                    speakerRecognitionEnabled: speakerRecognitionEnabled,
                     audioDuration: capturedDuration,
                     onRetry: { [weak self] attempt, totalRetries in
                         self?.retryAttempt = attempt
@@ -279,7 +299,10 @@ final class NotchStateManager {
                 diagnosticsStore.markSucceeded(
                     for: diagnosticsID,
                     transcriptText: transcription,
-                    outputCharacterCount: transcription.count
+                    outputCharacterCount: transcription.count,
+                    provider: provider,
+                    speakerRecognitionEnabled: speakerRecognitionEnabled,
+                    promptProvided: prompt != nil
                 )
 
                 if SettingsManager.shared.autoPasteEnabled {
@@ -291,7 +314,7 @@ final class NotchStateManager {
                 }
 
                 state = .done
-                audioRecorder.deleteRecording(at: url)
+                retainRecordingIfNeeded(url, diagnosticsID: diagnosticsID)
                 activeDiagnosticsID = nil
                 stopProcessingTimer()
 
@@ -307,11 +330,7 @@ final class NotchStateManager {
                 SoundManager.shared.playErrorSound()
                 stopProcessingTimer()
 
-                if SettingsManager.shared.retainFailedRecordingsEnabled {
-                    diagnosticsStore.retainAudioForManualRetry(sourceURL: url, for: diagnosticsID)
-                } else {
-                    audioRecorder.deleteRecording(at: url)
-                }
+                retainRecordingIfNeeded(url, diagnosticsID: diagnosticsID)
 
                 activeDiagnosticsID = nil
 
@@ -326,6 +345,9 @@ final class NotchStateManager {
     func cancel() {
         if let activeDiagnosticsID {
             diagnosticsStore.markCancelled(for: activeDiagnosticsID, reason: "Cancelled by user")
+            if let currentRecordingURL {
+                retainRecordingIfNeeded(currentRecordingURL, diagnosticsID: activeDiagnosticsID)
+            }
             self.activeDiagnosticsID = nil
         }
 
@@ -387,6 +409,17 @@ final class NotchStateManager {
             return
         }
 
+        let provider = SettingsManager.shared.transcriptionProvider
+        guard KeychainService.hasAPIKey(for: provider) else {
+            state = .error("No API key")
+            SettingsWindowController.show()
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                reset()
+            }
+            return
+        }
+
         state = .processing
         retryAttempt = nil
         totalRetries = 0
@@ -395,20 +428,24 @@ final class NotchStateManager {
         currentRecordingDuration = nil
         activeDiagnosticsID = diagnosticsID
 
+        let speakerRecognitionEnabled = provider == .elevenLabs
+            && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled
+        let prompt = provider == .openAI && !SettingsManager.shared.transcriptionPrompt.isEmpty
+            ? SettingsManager.shared.transcriptionPrompt
+            : nil
         diagnosticsStore.prepareForManualRetry(for: diagnosticsID)
         diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
         startProcessingTimer()
 
-        let prompt = SettingsManager.shared.transcriptionPrompt.isEmpty
-            ? nil
-            : SettingsManager.shared.transcriptionPrompt
-
         processingTask?.cancel()
         processingTask = Task {
             do {
-                let transcription = try await transcriptionService.transcribe(
+                let transcription = try await transcribe(
                     audioURL: retainedAudioURL,
                     prompt: prompt,
+                    provider: provider,
+                    speakerRecognitionEnabled: speakerRecognitionEnabled,
+                    audioDuration: nil,
                     onRetry: { [weak self] attempt, totalRetries in
                         self?.retryAttempt = attempt
                         self?.totalRetries = totalRetries
@@ -424,7 +461,10 @@ final class NotchStateManager {
                 diagnosticsStore.markSucceeded(
                     for: diagnosticsID,
                     transcriptText: transcription,
-                    outputCharacterCount: transcription.count
+                    outputCharacterCount: transcription.count,
+                    provider: provider,
+                    speakerRecognitionEnabled: speakerRecognitionEnabled,
+                    promptProvided: prompt != nil
                 )
 
                 if SettingsManager.shared.autoPasteEnabled {
@@ -436,7 +476,6 @@ final class NotchStateManager {
                 }
 
                 state = .done
-                diagnosticsStore.clearRetainedAudio(for: diagnosticsID)
                 activeDiagnosticsID = nil
                 stopProcessingTimer()
 
@@ -459,6 +498,42 @@ final class NotchStateManager {
                 reset()
             }
         }
+    }
+
+    private func transcribe(
+        audioURL: URL,
+        prompt: String?,
+        provider: TranscriptionProvider,
+        speakerRecognitionEnabled: Bool,
+        audioDuration: TimeInterval?,
+        onRetry: (@MainActor @Sendable (_ retryAttempt: Int, _ totalRetries: Int) async -> Void)?,
+        onLog: (@MainActor @Sendable (_ message: String, _ level: TranscriptionDiagnosticsEntry.LogLevel) async -> Void)?
+    ) async throws -> String {
+        switch provider {
+        case .openAI:
+            return try await openAITranscriptionService.transcribe(
+                audioURL: audioURL,
+                prompt: prompt,
+                audioDuration: audioDuration,
+                onRetry: onRetry,
+                onLog: onLog
+            )
+        case .elevenLabs:
+            return try await elevenLabsTranscriptionService.transcribe(
+                audioURL: audioURL,
+                diarize: speakerRecognitionEnabled,
+                onRetry: onRetry,
+                onLog: onLog
+            )
+        }
+    }
+
+    private func retainRecordingIfNeeded(_ audioURL: URL, diagnosticsID: UUID) {
+        if let retainedURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID),
+           retainedURL.standardizedFileURL == audioURL.standardizedFileURL {
+            return
+        }
+        diagnosticsStore.retainAudio(sourceURL: audioURL, for: diagnosticsID)
     }
 
     private func startProcessingTimer() {

@@ -81,39 +81,70 @@ struct SettingsView: View {
     private var settingsTab: some View {
         Form {
             Section {
+                Picker("Provider", selection: $settingsManager.transcriptionProvider) {
+                    ForEach(TranscriptionProvider.allCases) { provider in
+                        Text(provider.displayName).tag(provider)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Transcription Provider")
+            } footer: {
+                Text("Choose which service receives new recordings for transcription.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 apiKeySection
             } header: {
-                Text("OpenAI API Key")
+                Text("\(settingsManager.transcriptionProvider.displayName) API Key")
             } footer: {
                 Text("Your API key is stored securely in the macOS Keychain.")
                     .foregroundStyle(.secondary)
             }
 
-            Section {
-                TextEditor(text: $settingsManager.transcriptionPrompt)
-                    .frame(minHeight: 60, maxHeight: 120)
-                    .font(.body)
-            } header: {
-                Text("Transcription Prompt")
-            } footer: {
-                Text("Optional prompt to guide the transcription. Example: \"This is a technical discussion about Swift programming.\"")
-                    .foregroundStyle(.secondary)
+            if settingsManager.transcriptionProvider == .openAI {
+                Section {
+                    TextEditor(text: $settingsManager.transcriptionPrompt)
+                        .frame(minHeight: 60, maxHeight: 120)
+                        .font(.body)
+                } header: {
+                    Text("Transcription Prompt")
+                } footer: {
+                    Text("Optional prompt to guide OpenAI transcription. Example: \"This is a technical discussion about Swift programming.\"")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section {
+                    Toggle("Speaker recognition", isOn: $settingsManager.elevenLabsSpeakerRecognitionEnabled)
+                } header: {
+                    Text("ElevenLabs")
+                } footer: {
+                    Text("When enabled, Scribe v2 separates speakers and adds Speaker 1, Speaker 2, … labels to the transcript.")
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section {
                 Toggle("Auto-paste after transcription", isOn: $settingsManager.autoPasteEnabled)
-                Toggle("Keep failed recordings for manual retry (recommended)", isOn: $settingsManager.retainFailedRecordingsEnabled)
+                LabeledContent("Recording retention", value: "24 hours")
             } header: {
                 Text("Behavior")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Auto-paste inserts the transcription at your cursor position without overwriting your clipboard.")
-                    Text("If a transcription fails after retries, Notchtalk can retain the audio locally so you can re-transcribe it from History.")
+                    Text("All completed recordings are retained locally for 24 hours so they can be re-transcribed, then deleted automatically.")
                 }
                 .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
+        .onChange(of: settingsManager.transcriptionProvider) {
+            showAPIKeyField = false
+            apiKeyInput = ""
+            saveError = nil
+            showSaveSuccess = false
+        }
     }
 
     private enum HistoryDetailsMode: Hashable {
@@ -149,6 +180,7 @@ struct SettingsView: View {
         .padding(16)
         .searchable(text: $searchText, placement: .toolbar, prompt: "Search transcript, error, logs")
         .onAppear {
+            diagnosticsStore.purgeExpiredRetainedAudio()
             if selectedHistoryID == nil {
                 selectedHistoryID = filteredHistoryEntries.first?.id
             }
@@ -309,7 +341,7 @@ struct SettingsView: View {
     }
 
     private func shouldShowRetranscribe(for entry: TranscriptionDiagnosticsEntry) -> Bool {
-        if entry.status != .failed && entry.status != .cancelled {
+        if entry.status == .pending || !settingsManager.hasAPIKey {
             return false
         }
 
@@ -380,10 +412,17 @@ struct SettingsView: View {
                         detailsRow(title: "Status", value: entry.status.rawValue.capitalized)
                         detailsRow(title: "Created", value: formattedTimestamp(entry.createdAt))
                         detailsRow(title: "Updated", value: formattedTimestamp(entry.updatedAt))
+                        detailsRow(title: "Provider", value: (entry.provider ?? .openAI).displayName)
+                        if entry.provider == .elevenLabs {
+                            detailsRow(title: "Speaker Recognition", value: entry.speakerRecognitionEnabled == true ? "Enabled" : "Disabled")
+                        }
                         detailsRow(title: "Prompt", value: entry.promptProvided ? "Included" : "None")
                         detailsRow(title: "Retries", value: "\(entry.retryCount)")
                         detailsRow(title: "Audio File", value: entry.sourceAudioFilename)
                         detailsRow(title: "Retained Audio", value: entry.retainedAudioFilename == nil ? "None" : "Available")
+                        if let expiresAt = entry.retainedAudioExpiresAt {
+                            detailsRow(title: "Audio Expires", value: formattedTimestamp(expiresAt))
+                        }
                         if let count = entry.outputCharacterCount {
                             detailsRow(title: "Output Length", value: "\(count) chars")
                         }
@@ -530,7 +569,10 @@ struct SettingsView: View {
             "created_at",
             "updated_at",
             "audio_filename",
+            "provider",
+            "speaker_recognition_enabled",
             "retained_audio_filename",
+            "retained_audio_expires_at",
             "prompt_provided",
             "retry_count",
             "output_character_count",
@@ -545,20 +587,24 @@ struct SettingsView: View {
                 return "[\(timestamp) \(event.level.rawValue.uppercased())] \(event.message)"
             }.joined(separator: " | ")
 
-            return [
+            let columns: [String] = [
                 entry.id.uuidString,
                 entry.status.rawValue,
                 ISO8601DateFormatter().string(from: entry.createdAt),
                 ISO8601DateFormatter().string(from: entry.updatedAt),
                 entry.sourceAudioFilename,
+                (entry.provider ?? .openAI).rawValue,
+                String(entry.speakerRecognitionEnabled ?? false),
                 entry.retainedAudioFilename ?? "",
+                entry.retainedAudioExpiresAt.map { ISO8601DateFormatter().string(from: $0) } ?? "",
                 String(entry.promptProvided),
                 String(entry.retryCount),
                 entry.outputCharacterCount.map(String.init) ?? "",
                 entry.errorMessage ?? "",
                 entry.transcriptText ?? "",
                 logs
-            ].map { csvEscaped($0) }.joined(separator: ",")
+            ]
+            return columns.map { csvEscaped($0) }.joined(separator: ",")
         }
 
         return ([header] + rows).joined(separator: "\n")
@@ -598,7 +644,7 @@ struct SettingsView: View {
             }
         } else {
             HStack {
-                SecureField("Enter your OpenAI API key", text: $apiKeyInput)
+                SecureField("Enter your \(settingsManager.transcriptionProvider.displayName) API key", text: $apiKeyInput)
                     .textFieldStyle(.roundedBorder)
 
                 Button(settingsManager.hasAPIKey ? "Update" : "Save") {
@@ -633,7 +679,7 @@ struct SettingsView: View {
 
     private func saveAPIKey() {
         do {
-            try settingsManager.saveAPIKey(apiKeyInput)
+            try settingsManager.saveAPIKey(apiKeyInput, for: settingsManager.transcriptionProvider)
             apiKeyInput = ""
             showAPIKeyField = false
             saveError = nil

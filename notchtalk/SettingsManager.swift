@@ -10,7 +10,13 @@ import SwiftUI
 final class SettingsManager {
     static let shared = SettingsManager()
 
-    var hasAPIKey: Bool = false
+    private(set) var hasOpenAIAPIKey: Bool = false
+    private(set) var hasElevenLabsAPIKey: Bool = false
+    var transcriptionProvider: TranscriptionProvider {
+        didSet {
+            UserDefaults.standard.set(transcriptionProvider.rawValue, forKey: "transcriptionProvider")
+        }
+    }
     var transcriptionPrompt: String {
         didSet {
             UserDefaults.standard.set(transcriptionPrompt, forKey: "transcriptionPrompt")
@@ -21,26 +27,54 @@ final class SettingsManager {
             UserDefaults.standard.set(autoPasteEnabled, forKey: "autoPasteEnabled")
         }
     }
-    var retainFailedRecordingsEnabled: Bool {
+    var elevenLabsSpeakerRecognitionEnabled: Bool {
         didSet {
-            UserDefaults.standard.set(retainFailedRecordingsEnabled, forKey: "retainFailedRecordingsEnabled")
+            UserDefaults.standard.set(elevenLabsSpeakerRecognitionEnabled, forKey: "elevenLabsSpeakerRecognitionEnabled")
         }
     }
 
+    var hasAPIKey: Bool {
+        hasAPIKey(for: transcriptionProvider)
+    }
+
     private init() {
+        let savedProvider = UserDefaults.standard.string(forKey: "transcriptionProvider")
+            .flatMap(TranscriptionProvider.init(rawValue:))
+        self.transcriptionProvider = savedProvider ?? .openAI
         self.transcriptionPrompt = UserDefaults.standard.string(forKey: "transcriptionPrompt") ?? ""
         self.autoPasteEnabled = UserDefaults.standard.bool(forKey: "autoPasteEnabled")
-        self.retainFailedRecordingsEnabled = (UserDefaults.standard.object(forKey: "retainFailedRecordingsEnabled") as? Bool) ?? true
-        self.hasAPIKey = KeychainService.hasAPIKey
+        self.elevenLabsSpeakerRecognitionEnabled = UserDefaults.standard.bool(forKey: "elevenLabsSpeakerRecognitionEnabled")
+        self.hasOpenAIAPIKey = KeychainService.hasAPIKey(for: .openAI)
+        self.hasElevenLabsAPIKey = KeychainService.hasAPIKey(for: .elevenLabs)
     }
 
-    func saveAPIKey(_ apiKey: String) throws {
-        try KeychainService.saveAPIKey(apiKey)
-        hasAPIKey = true
+    func hasAPIKey(for provider: TranscriptionProvider) -> Bool {
+        switch provider {
+        case .openAI:
+            return hasOpenAIAPIKey
+        case .elevenLabs:
+            return hasElevenLabsAPIKey
+        }
     }
 
-    func deleteAPIKey() throws {
-        try KeychainService.deleteAPIKey()
-        hasAPIKey = false
+    func saveAPIKey(_ apiKey: String, for provider: TranscriptionProvider? = nil) throws {
+        let provider = provider ?? transcriptionProvider
+        try KeychainService.saveAPIKey(apiKey, for: provider)
+        setHasAPIKey(true, for: provider)
+    }
+
+    func deleteAPIKey(for provider: TranscriptionProvider? = nil) throws {
+        let provider = provider ?? transcriptionProvider
+        try KeychainService.deleteAPIKey(for: provider)
+        setHasAPIKey(false, for: provider)
+    }
+
+    private func setHasAPIKey(_ hasKey: Bool, for provider: TranscriptionProvider) {
+        switch provider {
+        case .openAI:
+            hasOpenAIAPIKey = hasKey
+        case .elevenLabs:
+            hasElevenLabsAPIKey = hasKey
+        }
     }
 }

@@ -100,7 +100,4 @@ final class AudioRecorder: NSObject {
         onAudioLevelUpdate?(smoothedLevel)
     }
 
-    func deleteRecording(at url: URL) {
-        try? FileManager.default.removeItem(at: url)
-    }
 }
