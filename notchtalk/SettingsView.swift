@@ -157,6 +157,7 @@ struct SettingsView: View {
             HStack {
                 Picker("Status", selection: $selectedHistoryStatus) {
                     Text("All").tag(Optional<TranscriptionDiagnosticsEntry.Status>.none)
+                    Text("Recording").tag(Optional(TranscriptionDiagnosticsEntry.Status.recording))
                     Text("Pending").tag(Optional(TranscriptionDiagnosticsEntry.Status.pending))
                     Text("Succeeded").tag(Optional(TranscriptionDiagnosticsEntry.Status.succeeded))
                     Text("Failed").tag(Optional(TranscriptionDiagnosticsEntry.Status.failed))
@@ -329,6 +330,8 @@ struct SettingsView: View {
         }
 
         switch entry.status {
+        case .recording:
+            return "Recording..."
         case .pending:
             return "Transcribing..."
         case .failed:
@@ -341,7 +344,7 @@ struct SettingsView: View {
     }
 
     private func shouldShowRetranscribe(for entry: TranscriptionDiagnosticsEntry) -> Bool {
-        if entry.status == .pending || !settingsManager.hasAPIKey {
+        if entry.status == .recording || entry.status == .pending || !settingsManager.hasAPIKey {
             return false
         }
 
@@ -364,6 +367,13 @@ struct SettingsView: View {
             }
         } else {
             switch entry.status {
+            case .recording:
+                VStack(alignment: .leading, spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Recording in progress...")
+                        .foregroundStyle(.secondary)
+                }
             case .pending:
                 VStack(alignment: .leading, spacing: 8) {
                     ProgressView()
@@ -492,6 +502,8 @@ struct SettingsView: View {
 
     private func color(for status: TranscriptionDiagnosticsEntry.Status) -> Color {
         switch status {
+        case .recording:
+            return .red
         case .pending:
             return .orange
         case .succeeded:

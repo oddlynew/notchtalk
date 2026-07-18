@@ -42,33 +42,49 @@ struct NotchView: View {
 
         case .recording:
             HStack(spacing: 12) {
-                // Red pulsing dot
-                Circle()
-                    .fill(.red)
-                    .frame(width: 8, height: 8)
-                    .modifier(PulseModifier())
+                if stateManager.cancelConfirmationRequested {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Press Esc again to cancel")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                } else {
+                    // Red pulsing dot
+                    Circle()
+                        .fill(.red)
+                        .frame(width: 8, height: 8)
+                        .modifier(PulseModifier())
 
-                // Timer
-                Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+                    // Timer
+                    Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
 
-                // Visualizer
-                AudioVisualizerView(level: stateManager.audioLevel)
-                    .frame(width: 60, height: 16)
+                    // Visualizer
+                    AudioVisualizerView(level: stateManager.audioLevel)
+                        .frame(width: 60, height: 16)
+                }
             }
 
         case .processing:
             HStack(spacing: 10) {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(.white)
+                if stateManager.cancelConfirmationRequested {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Press Esc again to cancel")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
 
-                AnimatedDotsText(text: stateManager.processingStatusText)
+                    AnimatedDotsText(text: stateManager.processingStatusText)
+                }
 
-                if stateManager.processingElapsed >= 10 {
+                if stateManager.processingElapsed >= 10 && !stateManager.cancelConfirmationRequested {
                     Button {
                         stateManager.retryProcessing()
                     } label: {
@@ -85,7 +101,7 @@ struct NotchView: View {
                             .foregroundStyle(.white.opacity(0.9))
                     }
                     .buttonStyle(.plain)
-                    .help("Cancel (Esc)")
+                    .help("Cancel immediately")
                 }
             }
 

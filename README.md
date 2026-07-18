@@ -12,7 +12,7 @@ Notchtalk is intentionally small. It is not planned to be paid, and it is likely
 - Global hotkey:
   - Tap **Right Command (⌘)** to start recording.
   - Tap **Right Command (⌘)** again to stop and transcribe.
-  - Press **Esc** to cancel recording/transcription.
+  - Press **Esc twice within 2.5 seconds** to cancel recording/transcription.
 - Shows a small “pill” UI near the notch/screen center while active.
 - Lets you choose OpenAI or ElevenLabs Scribe v2 as the transcription provider.
 - Stores provider API keys separately in the macOS Keychain.
@@ -103,7 +103,7 @@ Use `./script/build_and_run.sh --verify` to launch and verify that the process s
 
 ## History & Diagnostics
 
-Settings -> History shows recent transcription runs (including the transcribed text) and per-run log events (retries, errors). Exports:
+Settings -> History shows recordings from their start onward, including the stop/cancel trigger, transcript text, and per-run log events such as retries and errors. Exports:
 
 - JSON (machine-readable)
 - CSV (easy to inspect in a spreadsheet)
@@ -117,7 +117,7 @@ Diagnostics are stored locally under:
 - OpenAI and ElevenLabs API keys are stored separately in the macOS Keychain.
 - Audio is recorded locally, written to an `.m4a`, and uploaded only to the provider selected in Settings.
 - Transcription history (text + metadata + logs) is stored locally; it is not uploaded anywhere by Notchtalk.
-- Completed recordings are retained locally for 24 hours to allow manual re-transcription, then deleted automatically.
+- Completed and cancelled recordings are retained locally for 24 hours to allow manual re-transcription, then deleted automatically.
 - ElevenLabs speaker recognition sends `diarize=true` and formats returned speaker IDs as readable speaker-labelled paragraphs.
 
 ## Development

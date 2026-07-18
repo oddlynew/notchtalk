@@ -52,6 +52,7 @@ final class AudioRecorder: NSObject {
         smoothedLevel = 0
         let url = recordingURL
         audioRecorder = nil
+        recordingURL = nil
         return url
     }
 

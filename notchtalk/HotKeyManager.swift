@@ -80,6 +80,10 @@ final class HotKeyManager: @unchecked Sendable {
         if type == .keyDown {
             let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
             if keyCode == 53 {
+                let isAutoRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+                guard !isAutoRepeat else {
+                    return Unmanaged.passUnretained(event)
+                }
                 DispatchQueue.main.async { [weak self] in
                     self?.onCancel?()
                 }

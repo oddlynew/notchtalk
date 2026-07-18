@@ -18,6 +18,24 @@ enum OutputDisposition: Equatable, Sendable {
     case pastedToCursor
 }
 
+struct DoublePressConfirmationGate {
+    private(set) var expiresAt: Date?
+
+    mutating func registerPress(now: Date = Date(), interval: TimeInterval = 2.5) -> Bool {
+        if let expiresAt, now <= expiresAt {
+            self.expiresAt = nil
+            return true
+        }
+
+        expiresAt = now.addingTimeInterval(interval)
+        return false
+    }
+
+    mutating func reset() {
+        expiresAt = nil
+    }
+}
+
 @MainActor
 @Observable
 final class NotchStateManager {
@@ -30,6 +48,7 @@ final class NotchStateManager {
     var totalRetries = 0
     var lastOutputDisposition: OutputDisposition?
     var processingElapsed: TimeInterval = 0
+    var cancelConfirmationRequested = false
 
     var processingStatusText: String {
         if let retryAttempt, totalRetries > 0 {
@@ -44,6 +63,8 @@ final class NotchStateManager {
     private var recordingTask: Task<Void, Never>?
     private var processingTask: Task<Void, Never>?
     private var processingTimerTask: Task<Void, Never>?
+    private var cancelConfirmationTask: Task<Void, Never>?
+    private var cancelConfirmationGate = DoublePressConfirmationGate()
     private let audioRecorder = AudioRecorder()
     private let openAITranscriptionService = OpenAITranscriptionService(fallbackModel: "gpt-4o-mini-transcribe")
     private let elevenLabsTranscriptionService = ElevenLabsTranscriptionService()
@@ -58,12 +79,12 @@ final class NotchStateManager {
         }
     }
 
-    func toggle() {
+    func toggle(trigger: String = "programmatic") {
         switch state {
         case .idle:
             startRecording()
         case .recording:
-            stopRecording()
+            stopRecording(trigger: trigger)
         case .processing:
             break
         case .done, .error:
@@ -86,12 +107,24 @@ final class NotchStateManager {
 
         state = .recording
         recordingDuration = 0
+        currentRecordingURL = nil
+        activeDiagnosticsID = nil
+        clearCancelConfirmation()
         AudioDuckingService.shared.beginDucking()
         SoundManager.shared.playStartSound()
 
+        let speakerRecognitionEnabled = provider == .elevenLabs
+            && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled
+
         recordingTask = Task {
             do {
-                currentRecordingURL = try await audioRecorder.startRecording()
+                let recordingURL = try await audioRecorder.startRecording()
+                currentRecordingURL = recordingURL
+                activeDiagnosticsID = diagnosticsStore.startRecording(
+                    audioURL: recordingURL,
+                    provider: provider,
+                    speakerRecognitionEnabled: speakerRecognitionEnabled
+                )
 
                 // Update duration timer
                 while !Task.isCancelled && audioRecorder.isRecording {
@@ -108,7 +141,8 @@ final class NotchStateManager {
         }
     }
 
-    func stopRecording() {
+    func stopRecording(trigger: String = "programmatic") {
+        clearCancelConfirmation()
         recordingTask?.cancel()
         recordingTask = nil
 
@@ -134,11 +168,18 @@ final class NotchStateManager {
         let prompt = provider == .openAI && !SettingsManager.shared.transcriptionPrompt.isEmpty
             ? SettingsManager.shared.transcriptionPrompt
             : nil
-        let diagnosticsID = diagnosticsStore.startTranscription(
+        let diagnosticsID = activeDiagnosticsID ?? diagnosticsStore.startRecording(
             audioURL: recordingURL,
-            prompt: prompt,
             provider: provider,
             speakerRecognitionEnabled: speakerRecognitionEnabled
+        )
+        diagnosticsStore.beginTranscription(
+            for: diagnosticsID,
+            prompt: prompt,
+            provider: provider,
+            speakerRecognitionEnabled: speakerRecognitionEnabled,
+            stopTrigger: trigger,
+            recordingDuration: capturedRecordingDuration
         )
         let transcriptionAudioURL = diagnosticsStore.retainAudio(
             sourceURL: recordingURL,
@@ -342,20 +383,83 @@ final class NotchStateManager {
         }
     }
 
-    func cancel() {
-        if let activeDiagnosticsID {
-            diagnosticsStore.markCancelled(for: activeDiagnosticsID, reason: "Cancelled by user")
-            if let currentRecordingURL {
-                retainRecordingIfNeeded(currentRecordingURL, diagnosticsID: activeDiagnosticsID)
-            }
-            self.activeDiagnosticsID = nil
+    func requestEscapeCancel(now: Date = Date()) {
+        guard state == .recording || state == .processing else { return }
+
+        if cancelConfirmationGate.registerPress(now: now) {
+            cancel(reason: "Escape confirmed by second press")
+            return
         }
 
+        cancelConfirmationRequested = true
+        if let activeDiagnosticsID {
+            diagnosticsStore.log(
+                "Escape pressed once; waiting for second press before cancelling",
+                level: .warning,
+                for: activeDiagnosticsID
+            )
+        }
+
+        cancelConfirmationTask?.cancel()
+        let delay = max(0, cancelConfirmationGate.expiresAt?.timeIntervalSince(now) ?? 2.5)
+        cancelConfirmationTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                return
+            }
+
+            guard let self, self.cancelConfirmationRequested else { return }
+            self.cancelConfirmationRequested = false
+            self.cancelConfirmationGate.reset()
+            self.cancelConfirmationTask = nil
+            if let activeDiagnosticsID = self.activeDiagnosticsID {
+                self.diagnosticsStore.log(
+                    "Escape cancellation confirmation expired; recording continued",
+                    for: activeDiagnosticsID
+                )
+            }
+        }
+    }
+
+    func cancel(reason: String = "Cancel button") {
+        let wasRecording = state == .recording
+        clearCancelConfirmation()
         recordingTask?.cancel()
         recordingTask = nil
         processingTask?.cancel()
         processingTask = nil
-        audioRecorder.cancelRecording()
+
+        if wasRecording, let recordingURL = audioRecorder.stopRecording() {
+            currentRecordingURL = recordingURL
+            currentRecordingDuration = recordingDuration
+
+            let provider = SettingsManager.shared.transcriptionProvider
+            let speakerRecognitionEnabled = provider == .elevenLabs
+                && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled
+            let diagnosticsID = activeDiagnosticsID ?? diagnosticsStore.startRecording(
+                audioURL: recordingURL,
+                provider: provider,
+                speakerRecognitionEnabled: speakerRecognitionEnabled
+            )
+            diagnosticsStore.log(
+                "Recording cancelled after \(String(format: "%.2f", recordingDuration))s; trigger=\(reason)",
+                level: .warning,
+                for: diagnosticsID
+            )
+            retainRecordingIfNeeded(recordingURL, diagnosticsID: diagnosticsID)
+            diagnosticsStore.markCancelled(for: diagnosticsID, reason: reason)
+        } else {
+            audioRecorder.cancelRecording()
+            if let activeDiagnosticsID {
+                diagnosticsStore.markCancelled(for: activeDiagnosticsID, reason: reason)
+                if let currentRecordingURL {
+                    retainRecordingIfNeeded(currentRecordingURL, diagnosticsID: activeDiagnosticsID)
+                }
+            }
+        }
+
+        activeDiagnosticsID = nil
         AudioDuckingService.shared.endDucking()
         stopProcessingTimer()
         reset()
@@ -370,6 +474,7 @@ final class NotchStateManager {
         retryAttempt = nil
         totalRetries = 0
         processingElapsed = 0
+        clearCancelConfirmation()
         currentRecordingURL = nil
         currentRecordingDuration = nil
         lastOutputDisposition = nil
@@ -377,7 +482,7 @@ final class NotchStateManager {
 
     func retry() {
         if case .error = state {
-            stopRecording()
+            stopRecording(trigger: "retry_action")
         }
     }
 
@@ -553,5 +658,12 @@ final class NotchStateManager {
         processingTimerTask?.cancel()
         processingTimerTask = nil
         processingElapsed = 0
+    }
+
+    private func clearCancelConfirmation() {
+        cancelConfirmationTask?.cancel()
+        cancelConfirmationTask = nil
+        cancelConfirmationGate.reset()
+        cancelConfirmationRequested = false
     }
 }

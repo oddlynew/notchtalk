@@ -73,13 +73,13 @@ final class AppController {
         windowController?.setup()
 
         HotKeyManager.shared.onToggle = { [weak self] in
-            self?.stateManager.toggle()
+            self?.stateManager.toggle(trigger: "right_command_hotkey")
         }
         HotKeyManager.shared.onCancel = { [weak self] in
             guard let self else { return }
             switch self.stateManager.state {
             case .recording, .processing:
-                self.stateManager.cancel()
+                self.stateManager.requestEscapeCancel()
             default:
                 break
             }
@@ -152,7 +152,7 @@ final class AppController {
     func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notchtalk"
-        alert.informativeText = "Press Right ⌘ to start/stop recording.\nPress Esc to cancel recording/transcription.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
+        alert.informativeText = "Press Right ⌘ to start/stop recording.\nPress Esc twice within 2.5 seconds to cancel recording/transcription. Cancelled audio remains retryable for 24 hours.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
         alert.alertStyle = .informational
         alert.runModal()
     }

@@ -4,6 +4,35 @@ import Testing
 
 @MainActor
 struct TranscriptionDiagnosticsStoreTests {
+    @Test("Cancelled recordings remain available for manual transcription")
+    func cancelledRecordingIsRetained() throws {
+        let testDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notchtalk_cancelled_recording_\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: testDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testDirectory) }
+
+        let store = TranscriptionDiagnosticsStore(
+            storageURL: testDirectory.appendingPathComponent("diagnostics.json")
+        )
+        let sourceURL = testDirectory.appendingPathComponent("cancelled.m4a")
+        try Data("CANCELLED_AUDIO".utf8).write(to: sourceURL)
+
+        let id = store.startRecording(
+            audioURL: sourceURL,
+            provider: .elevenLabs,
+            speakerRecognitionEnabled: true
+        )
+        let retainedURL = try #require(store.retainAudio(sourceURL: sourceURL, for: id))
+        store.markCancelled(for: id, reason: "Escape confirmed by second press")
+
+        let entry = try #require(store.entries.first)
+        #expect(entry.status == .cancelled)
+        #expect(entry.provider == .elevenLabs)
+        #expect(entry.speakerRecognitionEnabled == true)
+        #expect(FileManager.default.fileExists(atPath: retainedURL.path))
+        #expect(store.retainedAudioURL(for: id) == retainedURL)
+    }
+
     @Test("History cap never removes recordings before their retention deadline")
     func historyCapPreservesUnexpiredAudio() throws {
         let testDirectory = FileManager.default.temporaryDirectory

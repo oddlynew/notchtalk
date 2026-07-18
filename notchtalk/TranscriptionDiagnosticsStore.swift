@@ -7,6 +7,7 @@ import Foundation
 
 struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
     enum Status: String, Codable {
+        case recording
         case pending
         case succeeded
         case failed
@@ -139,7 +140,62 @@ final class TranscriptionDiagnosticsStore {
         self.maxEntries = max(1, maxEntries)
         self.retentionInterval = retentionInterval
         loadFromDisk()
+        recoverInterruptedRecordings(now: now)
         purgeExpiredRetainedAudio(now: now)
+    }
+
+    func startRecording(
+        audioURL: URL,
+        provider: TranscriptionProvider,
+        speakerRecognitionEnabled: Bool = false
+    ) -> UUID {
+        purgeExpiredRetainedAudio()
+        let now = Date()
+        let id = UUID()
+
+        let entry = TranscriptionDiagnosticsEntry(
+            id: id,
+            createdAt: now,
+            updatedAt: now,
+            status: .recording,
+            sourceAudioFilename: audioURL.lastPathComponent,
+            provider: provider,
+            speakerRecognitionEnabled: provider == .elevenLabs ? speakerRecognitionEnabled : false,
+            promptProvided: false,
+            logs: [.init(level: .info, message: "Recording started")]
+        )
+
+        entries.insert(entry, at: 0)
+        trimIfNeeded()
+        persistToDisk()
+        return id
+    }
+
+    func beginTranscription(
+        for id: UUID,
+        prompt: String?,
+        provider: TranscriptionProvider,
+        speakerRecognitionEnabled: Bool,
+        stopTrigger: String,
+        recordingDuration: TimeInterval
+    ) {
+        mutateEntry(id) { entry in
+            entry.status = .pending
+            entry.provider = provider
+            entry.speakerRecognitionEnabled = provider == .elevenLabs ? speakerRecognitionEnabled : false
+            entry.promptProvided = provider == .openAI && !(prompt?.isEmpty ?? true)
+            entry.errorMessage = nil
+            entry.logs.append(
+                .init(
+                    level: .info,
+                    message: "Recording stopped after \(String(format: "%.2f", recordingDuration))s; trigger=\(stopTrigger)"
+                )
+            )
+            entry.logs.append(.init(level: .info, message: "Request queued"))
+            if entry.logs.count > maxLogsPerEntry {
+                entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
+            }
+        }
     }
 
     func startTranscription(
@@ -402,8 +458,8 @@ final class TranscriptionDiagnosticsStore {
             let expiration = entry.retainedAudioExpiresAt
                 ?? entry.createdAt.addingTimeInterval(retentionInterval)
             let ownsUnexpiredAudio = entry.retainedAudioFilename != nil && expiration > now
-            let isRecentPendingEntry = entry.status == .pending && expiration > now
-            let canRemove = !isRecentPendingEntry && !ownsUnexpiredAudio
+            let isActiveEntry = (entry.status == .recording || entry.status == .pending) && expiration > now
+            let canRemove = !isActiveEntry && !ownsUnexpiredAudio
 
             if canRemove {
                 if let filename = entry.retainedAudioFilename, !filename.isEmpty {
@@ -430,6 +486,23 @@ final class TranscriptionDiagnosticsStore {
 
         entries = decoded.sorted { $0.createdAt > $1.createdAt }
         trimIfNeeded()
+    }
+
+    private func recoverInterruptedRecordings(now: Date) {
+        let interruptedIDs = entries
+            .filter { $0.status == .recording }
+            .map(\.id)
+
+        for id in interruptedIDs {
+            guard let entry = entries.first(where: { $0.id == id }) else { continue }
+            let temporaryAudioURL = fileManager.temporaryDirectory
+                .appendingPathComponent(entry.sourceAudioFilename)
+
+            if fileManager.fileExists(atPath: temporaryAudioURL.path) {
+                _ = retainAudio(sourceURL: temporaryAudioURL, for: id, now: now)
+            }
+            markCancelled(for: id, reason: "App stopped while recording")
+        }
     }
 
     private func persistToDisk() {
