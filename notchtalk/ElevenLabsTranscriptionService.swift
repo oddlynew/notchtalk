@@ -66,6 +66,7 @@ actor ElevenLabsTranscriptionService {
     func transcribe(
         audioURL: URL,
         diarize: Bool,
+        useSpeakerLibrary: Bool = false,
         onRetry: RetryHandler? = nil,
         onLog: LogHandler? = nil
     ) async throws -> String {
@@ -78,6 +79,7 @@ actor ElevenLabsTranscriptionService {
             audioURL: audioURL,
             filename: audioURL.lastPathComponent,
             diarize: diarize,
+            useSpeakerLibrary: useSpeakerLibrary,
             boundary: boundary
         )
         defer { try? FileManager.default.removeItem(at: bodyURL) }
@@ -88,7 +90,10 @@ actor ElevenLabsTranscriptionService {
         request.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        await onLog?("ElevenLabs model=\(Self.model); speaker_recognition=\(diarize)", .info)
+        await onLog?(
+            "ElevenLabs model=\(Self.model); speaker_recognition=\(diarize); speaker_library=\(diarize && useSpeakerLibrary)",
+            .info
+        )
 
         for attempt in 0...maxRetries {
             do {
@@ -239,6 +244,7 @@ actor ElevenLabsTranscriptionService {
         audioURL: URL,
         filename: String,
         diarize: Bool,
+        useSpeakerLibrary: Bool,
         boundary: String
     ) throws -> URL {
         let bodyURL = FileManager.default.temporaryDirectory
@@ -251,6 +257,12 @@ actor ElevenLabsTranscriptionService {
         do {
             try appendField(name: "model_id", value: Self.model, boundary: boundary, to: handle)
             try appendField(name: "diarize", value: diarize ? "true" : "false", boundary: boundary, to: handle)
+            try appendField(
+                name: "use_speaker_library",
+                value: diarize && useSpeakerLibrary ? "true" : "false",
+                boundary: boundary,
+                to: handle
+            )
             try appendField(name: "tag_audio_events", value: "false", boundary: boundary, to: handle)
             try appendField(name: "timestamps_granularity", value: diarize ? "word" : "none", boundary: boundary, to: handle)
 
@@ -299,12 +311,14 @@ extension ElevenLabsTranscriptionService {
         audioURL: URL,
         filename: String,
         diarize: Bool,
+        useSpeakerLibrary: Bool = false,
         boundary: String
     ) throws -> URL {
         try createMultipartBodyFile(
             audioURL: audioURL,
             filename: filename,
             diarize: diarize,
+            useSpeakerLibrary: useSpeakerLibrary,
             boundary: boundary
         )
     }

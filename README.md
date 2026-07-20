@@ -118,7 +118,7 @@ Diagnostics are stored locally under:
 - Audio is recorded locally, written to an `.m4a`, and uploaded only to the provider selected in Settings.
 - Transcription history (text + metadata + logs) is stored locally; it is not uploaded anywhere by Notchtalk.
 - Completed and cancelled recordings are retained locally for 24 hours to allow manual re-transcription, then deleted automatically.
-- ElevenLabs speaker recognition sends `diarize=true` and formats returned speaker IDs as readable speaker-labelled paragraphs.
+- ElevenLabs speaker recognition sends `diarize=true` and formats returned speaker IDs as readable speaker-labelled paragraphs. The optional library setting also sends `use_speaker_library=true` so ElevenLabs can match speakers registered in the workspace.
 
 ## Development
 

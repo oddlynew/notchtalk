@@ -61,7 +61,11 @@ struct ElevenLabsTranscriptionServiceTests {
         let audioURL = try makeTemporaryAudioFile(contents: Data("AUDIO".utf8))
         defer { try? FileManager.default.removeItem(at: audioURL) }
 
-        let transcript = try await service.transcribe(audioURL: audioURL, diarize: true)
+        let transcript = try await service.transcribe(
+            audioURL: audioURL,
+            diarize: true,
+            useSpeakerLibrary: true
+        )
 
         #expect(transcript == "Speaker 1: Hello there.\n\nSpeaker 2: Hi!")
         let capturedAPIKey = await capture.apiKey
@@ -69,8 +73,39 @@ struct ElevenLabsTranscriptionServiceTests {
         let body = await capture.bodyText
         #expect(body.contains("name=\"model_id\"\r\n\r\nscribe_v2"))
         #expect(body.contains("name=\"diarize\"\r\n\r\ntrue"))
+        #expect(body.contains("name=\"use_speaker_library\"\r\n\r\ntrue"))
         #expect(body.contains("name=\"timestamps_granularity\"\r\n\r\nword"))
         #expect(body.contains("name=\"file\"; filename=\""))
+    }
+
+    @Test("Speaker library recognition is disabled when diarization is off")
+    func speakerLibraryRequiresDiarization() async throws {
+        let capture = RequestCapture()
+        let service = ElevenLabsTranscriptionService(
+            apiKeyProvider: { "eleven-test-key" },
+            upload: { request, bodyURL in
+                try await capture.record(request: request, bodyURL: bodyURL)
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: nil
+                )!
+                return (Data(#"{"text":"Hello","words":null}"#.utf8), response)
+            }
+        )
+        let audioURL = try makeTemporaryAudioFile(contents: Data("AUDIO".utf8))
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        _ = try await service.transcribe(
+            audioURL: audioURL,
+            diarize: false,
+            useSpeakerLibrary: true
+        )
+
+        let body = await capture.bodyText
+        #expect(body.contains("name=\"diarize\"\r\n\r\nfalse"))
+        #expect(body.contains("name=\"use_speaker_library\"\r\n\r\nfalse"))
     }
 
     @Test("Speaker recognition off returns the provider's plain transcript")

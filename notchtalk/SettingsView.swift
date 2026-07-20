@@ -117,11 +117,19 @@ struct SettingsView: View {
             } else {
                 Section {
                     Toggle("Speaker recognition", isOn: $settingsManager.elevenLabsSpeakerRecognitionEnabled)
+                    Toggle(
+                        "Recognize speakers from ElevenLabs library",
+                        isOn: $settingsManager.elevenLabsSpeakerLibraryRecognitionEnabled
+                    )
+                    .disabled(!settingsManager.elevenLabsSpeakerRecognitionEnabled)
                 } header: {
                     Text("ElevenLabs")
                 } footer: {
-                    Text("When enabled, Scribe v2 separates speakers and adds Speaker 1, Speaker 2, … labels to the transcript.")
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Speaker recognition separates speakers and adds Speaker 1, Speaker 2, … labels to the transcript.")
+                        Text("Library recognition matches detected speakers against registered speakers in your ElevenLabs workspace. It requires Speaker recognition.")
+                    }
+                    .foregroundStyle(.secondary)
                 }
             }
 

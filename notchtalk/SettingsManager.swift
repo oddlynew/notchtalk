@@ -32,6 +32,14 @@ final class SettingsManager {
             UserDefaults.standard.set(elevenLabsSpeakerRecognitionEnabled, forKey: "elevenLabsSpeakerRecognitionEnabled")
         }
     }
+    var elevenLabsSpeakerLibraryRecognitionEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(
+                elevenLabsSpeakerLibraryRecognitionEnabled,
+                forKey: "elevenLabsSpeakerLibraryRecognitionEnabled"
+            )
+        }
+    }
 
     var hasAPIKey: Bool {
         hasAPIKey(for: transcriptionProvider)
@@ -44,6 +52,9 @@ final class SettingsManager {
         self.transcriptionPrompt = UserDefaults.standard.string(forKey: "transcriptionPrompt") ?? ""
         self.autoPasteEnabled = UserDefaults.standard.bool(forKey: "autoPasteEnabled")
         self.elevenLabsSpeakerRecognitionEnabled = UserDefaults.standard.bool(forKey: "elevenLabsSpeakerRecognitionEnabled")
+        self.elevenLabsSpeakerLibraryRecognitionEnabled = UserDefaults.standard.bool(
+            forKey: "elevenLabsSpeakerLibraryRecognitionEnabled"
+        )
         self.hasOpenAIAPIKey = KeychainService.hasAPIKey(for: .openAI)
         self.hasElevenLabsAPIKey = KeychainService.hasAPIKey(for: .elevenLabs)
     }

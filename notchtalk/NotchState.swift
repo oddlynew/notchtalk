@@ -627,6 +627,8 @@ final class NotchStateManager {
             return try await elevenLabsTranscriptionService.transcribe(
                 audioURL: audioURL,
                 diarize: speakerRecognitionEnabled,
+                useSpeakerLibrary: speakerRecognitionEnabled
+                    && SettingsManager.shared.elevenLabsSpeakerLibraryRecognitionEnabled,
                 onRetry: onRetry,
                 onLog: onLog
             )
