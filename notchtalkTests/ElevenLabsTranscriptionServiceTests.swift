@@ -121,6 +121,21 @@ struct ElevenLabsTranscriptionServiceTests {
         #expect(transcript == "A plain transcript.")
     }
 
+    @Test("Speaker names returned from the ElevenLabs library are preserved")
+    func speakerLibraryNamesArePreserved() {
+        let response = ElevenLabsTranscriptionService.TranscriptionResponse(
+            text: "Hello Maria",
+            words: [
+                .init(text: "Hello", type: "word", speakerID: "Daniel"),
+                .init(text: " ", type: "spacing", speakerID: "Daniel"),
+                .init(text: "Maria", type: "word", speakerID: "Maria")
+            ]
+        )
+
+        let transcript = ElevenLabsTranscriptionService.formattedTranscript(from: response, diarize: true)
+        #expect(transcript == "Daniel: Hello\n\nMaria: Maria")
+    }
+
     private func makeTemporaryAudioFile(contents: Data) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("elevenlabs_test_\(UUID().uuidString).m4a")

@@ -118,6 +118,12 @@ actor ElevenLabsTranscriptionService {
                 }
 
                 let transcriptionResponse = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
+                if diarize {
+                    let speakerIDs = Set(transcriptionResponse.words?.compactMap(\.speakerID) ?? []).sorted()
+                    if !speakerIDs.isEmpty {
+                        await onLog?("ElevenLabs returned speaker IDs: \(speakerIDs.joined(separator: ", "))", .info)
+                    }
+                }
                 return Self.formattedTranscript(from: transcriptionResponse, diarize: diarize)
             } catch {
                 if Task.isCancelled {
@@ -180,6 +186,15 @@ actor ElevenLabsTranscriptionService {
         }
 
         return segments.map { segment in
+            let providerLabel = segment.speaker
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\r", with: " ")
+            if !providerLabel.isEmpty,
+               providerLabel.range(of: #"^speaker_\d+$"#, options: .regularExpression) == nil {
+                return "\(providerLabel): \(segment.text)"
+            }
+
             let number: Int
             if let existing = speakerNumbers[segment.speaker] {
                 number = existing
