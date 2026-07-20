@@ -18,24 +18,6 @@ enum OutputDisposition: Equatable, Sendable {
     case pastedToCursor
 }
 
-struct DoublePressConfirmationGate {
-    private(set) var expiresAt: Date?
-
-    mutating func registerPress(now: Date = Date(), interval: TimeInterval = 2.5) -> Bool {
-        if let expiresAt, now <= expiresAt {
-            self.expiresAt = nil
-            return true
-        }
-
-        expiresAt = now.addingTimeInterval(interval)
-        return false
-    }
-
-    mutating func reset() {
-        expiresAt = nil
-    }
-}
-
 @MainActor
 @Observable
 final class NotchStateManager {
@@ -48,7 +30,6 @@ final class NotchStateManager {
     var totalRetries = 0
     var lastOutputDisposition: OutputDisposition?
     var processingElapsed: TimeInterval = 0
-    var cancelConfirmationRequested = false
 
     var processingStatusText: String {
         if let retryAttempt, totalRetries > 0 {
@@ -63,8 +44,6 @@ final class NotchStateManager {
     private var recordingTask: Task<Void, Never>?
     private var processingTask: Task<Void, Never>?
     private var processingTimerTask: Task<Void, Never>?
-    private var cancelConfirmationTask: Task<Void, Never>?
-    private var cancelConfirmationGate = DoublePressConfirmationGate()
     private let audioRecorder = AudioRecorder()
     private let openAITranscriptionService = OpenAITranscriptionService(fallbackModel: "gpt-4o-mini-transcribe")
     private let elevenLabsTranscriptionService = ElevenLabsTranscriptionService()
@@ -109,7 +88,6 @@ final class NotchStateManager {
         recordingDuration = 0
         currentRecordingURL = nil
         activeDiagnosticsID = nil
-        clearCancelConfirmation()
         AudioDuckingService.shared.beginDucking()
         SoundManager.shared.playStartSound()
 
@@ -142,7 +120,6 @@ final class NotchStateManager {
     }
 
     func stopRecording(trigger: String = "programmatic") {
-        clearCancelConfirmation()
         recordingTask?.cancel()
         recordingTask = nil
 
@@ -383,48 +360,8 @@ final class NotchStateManager {
         }
     }
 
-    func requestEscapeCancel(now: Date = Date()) {
-        guard state == .recording || state == .processing else { return }
-
-        if cancelConfirmationGate.registerPress(now: now) {
-            cancel(reason: "Escape confirmed by second press")
-            return
-        }
-
-        cancelConfirmationRequested = true
-        if let activeDiagnosticsID {
-            diagnosticsStore.log(
-                "Escape pressed once; waiting for second press before cancelling",
-                level: .warning,
-                for: activeDiagnosticsID
-            )
-        }
-
-        cancelConfirmationTask?.cancel()
-        let delay = max(0, cancelConfirmationGate.expiresAt?.timeIntervalSince(now) ?? 2.5)
-        cancelConfirmationTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .seconds(delay))
-            } catch {
-                return
-            }
-
-            guard let self, self.cancelConfirmationRequested else { return }
-            self.cancelConfirmationRequested = false
-            self.cancelConfirmationGate.reset()
-            self.cancelConfirmationTask = nil
-            if let activeDiagnosticsID = self.activeDiagnosticsID {
-                self.diagnosticsStore.log(
-                    "Escape cancellation confirmation expired; recording continued",
-                    for: activeDiagnosticsID
-                )
-            }
-        }
-    }
-
     func cancel(reason: String = "Cancel button") {
         let wasRecording = state == .recording
-        clearCancelConfirmation()
         recordingTask?.cancel()
         recordingTask = nil
         processingTask?.cancel()
@@ -474,7 +411,6 @@ final class NotchStateManager {
         retryAttempt = nil
         totalRetries = 0
         processingElapsed = 0
-        clearCancelConfirmation()
         currentRecordingURL = nil
         currentRecordingDuration = nil
         lastOutputDisposition = nil
@@ -660,12 +596,5 @@ final class NotchStateManager {
         processingTimerTask?.cancel()
         processingTimerTask = nil
         processingElapsed = 0
-    }
-
-    private func clearCancelConfirmation() {
-        cancelConfirmationTask?.cancel()
-        cancelConfirmationTask = nil
-        cancelConfirmationGate.reset()
-        cancelConfirmationRequested = false
     }
 }

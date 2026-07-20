@@ -23,7 +23,7 @@ struct TranscriptionDiagnosticsStoreTests {
             speakerRecognitionEnabled: true
         )
         let retainedURL = try #require(store.retainAudio(sourceURL: sourceURL, for: id))
-        store.markCancelled(for: id, reason: "Escape confirmed by second press")
+        store.markCancelled(for: id, reason: "Escape key")
 
         let entry = try #require(store.entries.first)
         #expect(entry.status == .cancelled)

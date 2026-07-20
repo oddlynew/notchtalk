@@ -12,7 +12,7 @@ Notchtalk is intentionally small. It is not planned to be paid, and it is likely
 - Global hotkey:
   - Tap **Right Command (⌘)** to start recording.
   - Tap **Right Command (⌘)** again to stop and transcribe.
-  - Press **Esc twice within 2.5 seconds** to cancel recording/transcription.
+  - Press **Esc** to cancel recording/transcription immediately. Cancelled audio remains available in History for 24 hours.
 - Shows a small “pill” UI near the notch/screen center while active.
 - Lets you choose OpenAI or ElevenLabs Scribe v2 as the transcription provider.
 - Stores provider API keys separately in the macOS Keychain.
