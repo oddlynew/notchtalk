@@ -42,14 +42,15 @@ struct NotchtalkMenu: View {
             }
             .padding(14).background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055)))
-            Toggle("Send with Enter", isOn: $settings.sendWithEnter)
+            Toggle("Auto-send on release", isOn: $settings.sendWithEnter)
                 .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
             VStack(spacing: 9) {
                 shortcut("Press right ⌘", detail: "Start recording")
                 shortcut("Release before \(Int(settings.startHoldDelay * 1000)) ms", detail: "Keep recording")
                 shortcut("Hold beyond \(Int(settings.startHoldDelay * 1000)) ms", detail: "Release to finish")
                 shortcut("Hold again · \(Int(settings.finishHoldDelay * 1000)) ms", detail: "Finish & send")
-                shortcut("Esc", detail: "Cancel")
+                shortcut("Release Esc first", detail: "Cancel")
+                shortcut("Hold Esc, release ⌘", detail: "Transcribe only")
             }
             Divider()
             HStack {

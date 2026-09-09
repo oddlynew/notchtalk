@@ -25,6 +25,8 @@ final class NotchStateManager {
 
     // Cleared for every new attempt, including attempts that never reach the provider.
     var latestTranscript: String?
+    var isHoldRecording = false
+    var noSendForRecording = false
     var finishProgress: Double?
     private var finishTask: Task<Void, Never>?
     private var finishDeadline: TimeInterval?
@@ -79,6 +81,8 @@ final class NotchStateManager {
     }
 
     func startRecording() {
+        isHoldRecording = false
+        noSendForRecording = false
         processingTask?.cancel()
         latestTranscript = nil
         let provider = SettingsManager.shared.transcriptionProvider
@@ -457,6 +461,8 @@ final class NotchStateManager {
     }
 
     func reset() {
+        isHoldRecording = false
+        noSendForRecording = false
         finishTask?.cancel()
         finishTask = nil
         finishProgress = nil

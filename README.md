@@ -155,14 +155,13 @@ Press right Command to start recording immediately. Release within 800 ms to kee
 
 ### Sending with Enter
 
-One **Send with Enter after transcription** preference applies to both recording modes (existing enabled preferences migrate to it). No extra toggle shortcut is needed.
+**Auto-send on release** controls the default for hold recordings. It is off on a fresh installation; existing saved choices are preserved. The recording bar shows “Release to send” or “Release to transcribe”.
 
-To finish continuous recording, press right Command again. An Enter progress bar fills for 800 ms: release early to transcribe without sending, or keep holding until full to finish and send. This explicit gesture overrides the default sending preference. Other key combinations abandon the finish gesture and keep recording; Escape cancels.
+For a one-recording exception, hold Escape while still holding right Command:
+- Release Escape first: cancel the recording on Escape release.
+- Release right Command first: finish and transcribe without sending. Releasing Escape afterwards does nothing, including while transcription is running.
+- This override never changes the saved default. Escape pressed after transcription begins does nothing.
 
-Sending pastes the successful transcript and then simulates Enter, including when Auto-paste is off. Failures and cancellation do not send; retries and history retranscription do not inherit send intent.
+To finish continuous recording, press right Command again. Release before the background progress fills to transcribe without sending, or hold until full to finish and send. Holding Escape abandons this countdown and uses the release-order behavior above.
 
-The start hold threshold and finish/send threshold are independently adjustable in Settings from 200–2000 ms, in 50 ms steps. The start threshold defaults to 800 ms and the finish/send threshold to 600 ms. Each is captured when its gesture starts.
-
-Releasing a hold-mode recording never submits with Enter, regardless of the automatic-send preference. Normal Auto-paste/copy behavior is preserved.
-
-Enter/Return is not a Notchtalk shortcut and is never intercepted; it keeps its normal behavior in the focused application.
+Start and finish thresholds are separately adjustable from 200–2000 ms in 50 ms steps (defaults: 800 ms start, 600 ms finish). Enter/Return is not a recording shortcut. Failed/cancelled transcription never sends; manual retries/history do not inherit send intent. Sending pastes before simulating Enter, including when Auto-paste is disabled.

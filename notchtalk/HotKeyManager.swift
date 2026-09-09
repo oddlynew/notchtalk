@@ -14,9 +14,13 @@ final class HotKeyManager: @unchecked Sendable {
 
     private let lock = NSLock()
     private var gesture = ShortcutGesture()
+    private var escapeGesture = EscapeReleaseGesture()
     private var holdTimer: DispatchWorkItem?
     private var currentHoldDelay: TimeInterval = 0.8
 
+    var onEscapeHeld: (@MainActor () -> Void)?
+    var onFinishWithoutSending: (@MainActor () -> Void)?
+    var onHoldActivated: (@MainActor () -> Void)?
     var onRelease: (@MainActor () -> Void)?
     var onToggle: (@MainActor () -> Void)?
     var onChordCancel: (@MainActor () -> Void)?
@@ -37,7 +41,7 @@ final class HotKeyManager: @unchecked Sendable {
             return
         }
 
-        let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+        let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -65,6 +69,7 @@ final class HotKeyManager: @unchecked Sendable {
     func stop() {
         lock.lock()
         gesture.cancel()
+        escapeGesture.reset()
         holdTimer?.cancel()
         lock.unlock()
         if let tap = eventTap {
@@ -82,6 +87,7 @@ final class HotKeyManager: @unchecked Sendable {
             lock.lock()
             let wasHolding = gesture.down
             gesture.cancel()
+            escapeGesture.reset()
             holdTimer?.cancel()
             lock.unlock()
             if wasHolding { DispatchQueue.main.async { [weak self] in self?.onCancel?() } }
@@ -95,15 +101,30 @@ final class HotKeyManager: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        if keyCode == 53 {
+            if type == .keyDown {
+                let recording = MainActor.assumeIsolated { NotchStateManager.shared.state == .recording }
+                if escapeGesture.press(recording: recording) {
+                    MainActor.assumeIsolated { onEscapeHeld?() }
+                }
+            } else if type == .keyUp && escapeGesture.release() {
+                lock.lock()
+                gesture.cancel()
+                holdTimer?.cancel()
+                lock.unlock()
+                MainActor.assumeIsolated {
+                    if NotchStateManager.shared.state == .recording { onCancel?() }
+                }
+            }
+            return Unmanaged.passUnretained(event)
+        }
         if type == .keyDown || (type == .flagsChanged && keyCode != 54) {
             lock.lock()
             let wasHolding = gesture.down
             gesture.cancel()
             holdTimer?.cancel()
             lock.unlock()
-            if keyCode == 53 {
-                DispatchQueue.main.async { [weak self] in self?.onCancel?() }
-            } else if wasHolding {
+            if wasHolding {
                 DispatchQueue.main.async { [weak self] in self?.onChordCancel?() }
             }
         } else if type == .flagsChanged && keyCode == 54 {
@@ -118,8 +139,9 @@ final class HotKeyManager: @unchecked Sendable {
                     let timer = DispatchWorkItem { [weak self] in
                         guard let self else { return }
                         self.lock.lock()
-                        _ = self.gesture.threshold()
+                        let activated = self.gesture.threshold()
                         self.lock.unlock()
+                        if activated { MainActor.assumeIsolated { self.onHoldActivated?() } }
                     }
                     holdTimer = timer
                     DispatchQueue.main.asyncAfter(deadline: .now() + currentHoldDelay, execute: timer)
@@ -127,9 +149,14 @@ final class HotKeyManager: @unchecked Sendable {
                 lock.unlock()
             } else {
                 holdTimer?.cancel()
+                let finishWithoutSending = gesture.down && escapeGesture.commandReleased()
                 let action = gesture.release(holdDelay: currentHoldDelay)
                 lock.unlock()
                 DispatchQueue.main.async { [weak self] in
+                    if finishWithoutSending {
+                        self?.onFinishWithoutSending?()
+                        return
+                    }
                     self?.onRelease?()
                     switch action {
                     case .endHold: self?.onHoldEnd?()

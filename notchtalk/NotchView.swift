@@ -74,11 +74,15 @@ struct NotchView: View {
                             .foregroundStyle(.white)
                             .accessibilityLabel("Hold to send")
                             .accessibilityValue("\(Int(progress * 100)) percent")
+                    } else if stateManager.isHoldRecording || stateManager.noSendForRecording {
+                        Text(SettingsManager.shared.sendWithEnter && !stateManager.noSendForRecording ? "Release to send" : "Release to transcribe")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.85))
                     } else {
                         AudioVisualizerView(level: stateManager.audioLevel)
                     }
                 }
-                .frame(width: 60, height: 16)
+                .frame(width: 110, height: 16)
             }
 
         case .processing:
