@@ -161,4 +161,4 @@ To finish continuous recording, press right Command again. An Enter progress bar
 
 Sending pastes the successful transcript and then simulates Enter, including when Auto-paste is off. Failures and cancellation do not send; retries and history retranscription do not inherit send intent.
 
-The start hold threshold and finish/send threshold are independently adjustable in Settings from 200–2000 ms, in 50 ms steps. Both default to 800 ms and are captured when the corresponding gesture starts.
+The start hold threshold and finish/send threshold are independently adjustable in Settings from 200–2000 ms, in 50 ms steps. The start threshold defaults to 800 ms and the finish/send threshold to 600 ms. Each is captured when its gesture starts.
