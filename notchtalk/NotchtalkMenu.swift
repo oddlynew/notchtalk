@@ -7,12 +7,12 @@ struct NotchtalkMenu: View {
     @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Image(systemName: "waveform").font(.title2).foregroundStyle(.mint)
-                    .frame(width: 40, height: 40).background(.mint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                Image(systemName: "waveform").font(.title2).foregroundStyle(NotchtalkStyle.accent)
+                    .frame(width: 40, height: 40).background(NotchtalkStyle.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Notchtalk").font(.system(size: 18, weight: .semibold, design: .rounded))
+                    Text("Notchtalk").font(.system(size: 17, weight: .semibold))
                     Text(status).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -24,10 +24,10 @@ struct NotchtalkMenu: View {
                 Button("Allow microphone", systemImage: "mic") { controller.requestMicrophonePermission() }
             }
             VStack(alignment: .leading, spacing: 10) {
-                Text("LATEST TRANSCRIPT").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                Text(manager.latestTranscript ?? "Your next successful transcript will appear here.")
+                Text("Latest transcript").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                Text(manager.latestTranscript ?? "Nothing to copy yet")
                     .font(.system(size: 12)).foregroundStyle(manager.latestTranscript == nil ? .secondary : .primary)
-                    .lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
+                    .lineSpacing(3).lineLimit(3).frame(minHeight: 42, alignment: .topLeading).frame(maxWidth: .infinity, alignment: .leading)
                 Button {
                     guard let text = manager.latestTranscript else { return }
                     ClipboardService.copy(text)
@@ -36,11 +36,12 @@ struct NotchtalkMenu: View {
                     Label(copied ? "Copied" : "Copy latest", systemImage: copied ? "checkmark" : "doc.on.doc")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent).tint(.mint)
+                .buttonStyle(QuietButtonStyle())
                 .disabled(manager.latestTranscript == nil)
             }
-            .padding(14).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
-            VStack(spacing: 8) {
+            .padding(14).background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055)))
+            VStack(spacing: 9) {
                 shortcut("Press right ⌘", detail: "Start / stop instantly")
                 shortcut("Release before 0.8s", detail: "Keep recording")
                 shortcut("Hold beyond 0.8s", detail: "Release to finish")
@@ -55,9 +56,10 @@ struct NotchtalkMenu: View {
                     Button("About Notchtalk") { controller.showAbout() }
                     Button("Quit Notchtalk") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q")
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 22)
-            }.buttonStyle(.plain).font(.caption)
+            }.buttonStyle(QuietButtonStyle()).font(.caption)
         }
-        .padding(20).frame(width: 320)
+        .padding(20).frame(width: 330)
+        .tint(NotchtalkStyle.accent)
         .onChange(of: manager.latestTranscript) { _, _ in copied = false }
     }
     private func shortcut(_ key: String, detail: String) -> some View {

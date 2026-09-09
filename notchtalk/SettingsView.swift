@@ -64,8 +64,8 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Notchtalk", systemImage: "waveform")
-                    .font(.system(size: 19, weight: .semibold, design: .rounded))
-                    .padding(.bottom, 24).foregroundStyle(.mint)
+                    .font(.system(size: 17, weight: .semibold))
+                    .padding(.bottom, 24).foregroundStyle(.primary)
                 navigationItem("History", icon: "clock.arrow.circlepath", tab: .history)
                 navigationItem("Settings", icon: "slider.horizontal.3", tab: .settings)
                 Spacer()
@@ -75,8 +75,8 @@ struct SettingsView: View {
             Divider()
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(selectedTab == .history ? "Transcripts" : "Make it yours")
-                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    Text(selectedTab == .history ? "Transcripts" : "Settings")
+                        .font(.system(size: 22, weight: .semibold))
                     Text(selectedTab == .history ? "Revisit your recordings and their transcripts." : "Recording, transcription and output preferences.")
                         .font(.callout).foregroundStyle(.secondary)
                 }.padding(24)
@@ -84,7 +84,7 @@ struct SettingsView: View {
                 if selectedTab == .history { historyTab } else { settingsTab }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .tint(.mint)
+        .tint(NotchtalkStyle.accent)
         .frame(width: 940, height: 620)
         .navigationTitle("Notchtalk")
     }
@@ -94,8 +94,9 @@ struct SettingsView: View {
             Label(title, systemImage: icon)
                 .font(.system(size: 13, weight: .medium))
                 .frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                .background(selectedTab == tab ? Color.mint.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 9))
+                .background(selectedTab == tab ? NotchtalkStyle.accent.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 9))
         }.buttonStyle(.plain)
+        .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
     }
 
     private var settingsTab: some View {

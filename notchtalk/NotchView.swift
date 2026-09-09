@@ -24,14 +24,14 @@ struct NotchView: View {
                     .background(
                         Capsule()
                             .fill(Color(red: 0.055, green: 0.075, blue: 0.075))
-                            .overlay(Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1))
+                            .overlay(Capsule().strokeBorder(.white.opacity(0.09), lineWidth: 1))
                             .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
                     )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .animation(.spring(duration: 0.3, bounce: 0.2), value: isActive)
+        .animation(.smooth(duration: 0.25), value: isActive)
         .animation(.spring(duration: 0.2), value: stateManager.state)
     }
 
@@ -45,7 +45,7 @@ struct NotchView: View {
             HStack(spacing: 12) {
                 // Red pulsing dot
                 Circle()
-                    .fill(.mint)
+                    .fill(NotchtalkStyle.recording)
                     .frame(width: 8, height: 8)
                     .modifier(PulseModifier())
 
@@ -93,7 +93,7 @@ struct NotchView: View {
         case .done:
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(NotchtalkStyle.recording)
 
                 Text(stateManager.lastOutputDisposition == .pastedToCursor ? "Pasted!" : "Copied!")
                     .font(.system(size: 13, weight: .medium))
