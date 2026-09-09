@@ -165,7 +165,7 @@ struct SettingsView: View {
                         .accessibilityLabel("Hold to send threshold")
                 }
                 Toggle("Send with Enter after transcription", isOn: $settingsManager.sendWithEnter)
-                Text("Hold-mode release never sends Enter. For continuous recording, hold right Command again until the background fills to send, or release early to transcribe without sending. Enter also finishes and sends directly.")
+                Text("Hold-mode release never sends Enter. For continuous recording, hold right Command again until the background fills to send, or release early to transcribe without sending.")
                     .font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Recording retention", value: "24 hours")
             } header: {

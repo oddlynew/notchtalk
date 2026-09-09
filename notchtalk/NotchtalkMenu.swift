@@ -49,7 +49,6 @@ struct NotchtalkMenu: View {
                 shortcut("Release before \(Int(settings.startHoldDelay * 1000)) ms", detail: "Keep recording")
                 shortcut("Hold beyond \(Int(settings.startHoldDelay * 1000)) ms", detail: "Release to finish")
                 shortcut("Hold again · \(Int(settings.finishHoldDelay * 1000)) ms", detail: "Finish & send")
-                shortcut("Enter while recording", detail: "Finish & send")
                 shortcut("Esc", detail: "Cancel")
             }
             Divider()
