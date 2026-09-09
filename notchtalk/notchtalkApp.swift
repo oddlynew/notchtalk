@@ -50,6 +50,21 @@ final class AppController {
                 self.gestureStartedRecording = self.stateManager.state == .recording
             }
         }
+        HotKeyManager.shared.onHoldActivated = { [weak self] in
+            guard let self, self.gestureStartedRecording, self.stateManager.state == .recording else { return }
+            self.stateManager.isHoldRecording = true
+        }
+        HotKeyManager.shared.onEscapeHeld = { [weak self] in
+            guard let self else { return }
+            self.stateManager.noSendForRecording = true
+            // Stop the continuous finish timer, so Escape can safely modify release.
+            self.stateManager.abandonFinishGesture()
+        }
+        HotKeyManager.shared.onFinishWithoutSending = { [weak self] in
+            guard let self, self.stateManager.state == .recording else { return }
+            self.gestureStartedRecording = false
+            self.stateManager.stopRecording(submitAfterPaste: false)
+        }
         HotKeyManager.shared.onRelease = { [weak self] in
             self?.stateManager.releaseFinishGesture()
         }
@@ -66,7 +81,7 @@ final class AppController {
         HotKeyManager.shared.onHoldEnd = { [weak self] in
             guard let self, self.gestureStartedRecording, self.stateManager.state == .recording else { return }
             self.gestureStartedRecording = false
-            self.stateManager.stopRecording(submitAfterPaste: false)
+            self.stateManager.stopRecording(submitAfterPaste: SettingsManager.shared.sendWithEnter && !self.stateManager.noSendForRecording)
         }
         HotKeyManager.shared.onCancel = { [weak self] in
             guard let self else { return }
@@ -145,7 +160,7 @@ final class AppController {
     func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notchtalk"
-        alert.informativeText = "Press Right ⌘ to start immediately. Release within 0.8 seconds to keep recording; hold longer and release to finish. Tap again and release to transcribe, or hold again for 0.8 seconds to transcribe and send.\nPress Esc to cancel recording/transcription.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
+        alert.informativeText = "Press Right ⌘ to start immediately. Release within 0.8 seconds to keep recording; hold longer and release to finish. Tap again and release to transcribe, or hold again for 0.8 seconds to transcribe and send.\nRelease Escape before right Command to cancel recording. Release right Command while holding Escape to transcribe without sending.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
         alert.alertStyle = .informational
         alert.runModal()
     }
