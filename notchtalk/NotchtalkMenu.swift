@@ -41,8 +41,9 @@ struct NotchtalkMenu: View {
             }
             .padding(14).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
             VStack(spacing: 8) {
-                shortcut("Tap right ⌘", detail: "Start / stop")
-                shortcut("Hold right ⌘ · 0.8s", detail: "Release to finish")
+                shortcut("Press right ⌘", detail: "Start / stop instantly")
+                shortcut("Release before 0.8s", detail: "Keep recording")
+                shortcut("Hold beyond 0.8s", detail: "Release to finish")
                 shortcut("Esc", detail: "Cancel")
             }
             Divider()

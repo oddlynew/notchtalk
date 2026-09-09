@@ -1,13 +1,17 @@
+import Foundation
+
 // Pure gesture transitions; the event tap owns the one-shot 800 ms timer.
 struct ShortcutGesture {
-    enum Action { case none, toggle, endHold }
+    enum Action { case none, endHold }
     private(set) var down = false
     private(set) var holding = false
     private var allowed = false
+    private var pressedAt: TimeInterval = 0
 
-    mutating func press(allowed: Bool) -> Bool {
+    mutating func press(allowed: Bool, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         guard !down else { return false }
         down = true
+        pressedAt = now
         self.allowed = allowed
         return allowed
     }
@@ -16,8 +20,8 @@ struct ShortcutGesture {
         holding = true
         return true
     }
-    mutating func release() -> Action {
-        let action: Action = down && allowed ? (holding ? .endHold : .toggle) : .none
+    mutating func release(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Action {
+        let action: Action = down && allowed ? ((holding || now - pressedAt >= 0.8) ? .endHold : .none) : .none
         cancel()
         return action
     }

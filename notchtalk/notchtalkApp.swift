@@ -24,6 +24,7 @@ struct notchtalkApp: App {
 @Observable
 final class AppController {
     private let stateManager = NotchStateManager.shared
+    private var gestureStartedRecording = false
     private var windowController: NotchWindowController?
     private(set) var hasAccessibilityPermission = false
     private(set) var hasMicrophonePermission = false
@@ -40,14 +41,18 @@ final class AppController {
         windowController?.setup()
 
         HotKeyManager.shared.onToggle = { [weak self] in
-            self?.stateManager.toggle(trigger: "right_command_hotkey")
-        }
-        HotKeyManager.shared.onHoldStart = { [weak self] in
-            guard let self, self.stateManager.state != .recording else { return }
+            guard let self else { return }
             self.stateManager.toggle()
+            self.gestureStartedRecording = self.stateManager.state == .recording
+        }
+        HotKeyManager.shared.onChordCancel = { [weak self] in
+            guard let self, self.gestureStartedRecording else { return }
+            self.gestureStartedRecording = false
+            self.stateManager.cancel()
         }
         HotKeyManager.shared.onHoldEnd = { [weak self] in
-            guard let self, self.stateManager.state == .recording else { return }
+            guard let self, self.gestureStartedRecording, self.stateManager.state == .recording else { return }
+            self.gestureStartedRecording = false
             self.stateManager.stopRecording()
         }
         HotKeyManager.shared.onCancel = { [weak self] in
@@ -127,7 +132,7 @@ final class AppController {
     func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notchtalk"
-        alert.informativeText = "Tap Right ⌘ to start/stop on release. Hold for 0.8 seconds to record until release.\nPress Esc to cancel recording/transcription.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
+        alert.informativeText = "Press Right ⌘ to start immediately. Release within 0.8 seconds to keep recording; hold longer and release to finish. Tap again to stop.\nPress Esc to cancel recording/transcription.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
         alert.alertStyle = .informational
         alert.runModal()
     }
