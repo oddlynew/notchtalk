@@ -24,6 +24,16 @@ struct NotchView: View {
                     .background(
                         Capsule()
                             .fill(Color(red: 0.055, green: 0.075, blue: 0.075))
+                            .overlay(alignment: .leading) {
+                                GeometryReader { geometry in
+                                    Rectangle()
+                                        .fill(NotchtalkStyle.recording.opacity(0.30))
+                                        .frame(width: geometry.size.width * min(1, max(0, stateManager.finishProgress ?? 0)))
+                                }
+                                .clipShape(Capsule())
+                                .allowsHitTesting(false)
+                                .accessibilityHidden(true)
+                            }
                             .overlay(Capsule().strokeBorder(.white.opacity(0.09), lineWidth: 1))
                             .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
                     )
@@ -43,21 +53,11 @@ struct NotchView: View {
 
         case .recording:
             HStack(spacing: 12) {
-                // Red pulsing dot
+                // Recording indicator
                 Circle()
                     .fill(NotchtalkStyle.recording)
                     .frame(width: 8, height: 8)
                     .modifier(PulseModifier())
-
-                if let progress = stateManager.finishProgress {
-                    VStack(spacing: 3) {
-                        Text("Enter").font(.system(size: 10, weight: .medium))
-                        ProgressView(value: progress).progressViewStyle(.linear)
-                            .tint(NotchtalkStyle.recording)
-                    }
-                    .foregroundStyle(.white.opacity(0.8))
-                    .frame(width: 70)
-                }
 
                 // Timer
                 Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
@@ -67,10 +67,18 @@ struct NotchView: View {
                     .contentTransition(.numericText())
 
                 // Visualizer
-                if stateManager.finishProgress == nil {
-                    AudioVisualizerView(level: stateManager.audioLevel)
-                        .frame(width: 60, height: 16)
+                ZStack {
+                    if let progress = stateManager.finishProgress {
+                        Label("Enter", systemImage: "arrow.turn.down.left")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white)
+                            .accessibilityLabel("Hold to send")
+                            .accessibilityValue("\(Int(progress * 100)) percent")
+                    } else {
+                        AudioVisualizerView(level: stateManager.audioLevel)
+                    }
                 }
+                .frame(width: 60, height: 16)
             }
 
         case .processing:
