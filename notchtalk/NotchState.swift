@@ -65,7 +65,7 @@ final class NotchStateManager {
         case .idle:
             startRecording()
         case .recording:
-            stopRecording(trigger: trigger)
+            stopRecording(submitAfterPaste: SettingsManager.shared.submitAfterContinuous, trigger: trigger)
         case .processing:
             break
         case .done, .error:
@@ -128,7 +128,7 @@ final class NotchStateManager {
         }
     }
 
-    func stopRecording(trigger: String = "programmatic") {
+    func stopRecording(submitAfterPaste: Bool = false, trigger: String = "programmatic") {
         recordingTask?.cancel()
         recordingTask = nil
 
@@ -207,9 +207,9 @@ final class NotchStateManager {
                 )
 
                 // Copy to clipboard and optionally paste
-                if SettingsManager.shared.autoPasteEnabled {
+                if SettingsManager.shared.autoPasteEnabled || submitAfterPaste {
                     lastOutputDisposition = .pastedToCursor
-                    ClipboardService.pastePreservingClipboard(transcription)
+                    ClipboardService.pastePreservingClipboard(transcription, submit: submitAfterPaste)
                 } else {
                     lastOutputDisposition = .copiedToClipboard
                     ClipboardService.copy(transcription)

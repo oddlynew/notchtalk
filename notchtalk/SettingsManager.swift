@@ -22,6 +22,12 @@ final class SettingsManager {
             UserDefaults.standard.set(transcriptionPrompt, forKey: "transcriptionPrompt")
         }
     }
+    var submitAfterContinuous: Bool {
+        didSet { UserDefaults.standard.set(submitAfterContinuous, forKey: "submitAfterContinuous") }
+    }
+    var submitAfterHold: Bool {
+        didSet { UserDefaults.standard.set(submitAfterHold, forKey: "submitAfterHold") }
+    }
     var autoPasteEnabled: Bool {
         didSet {
             UserDefaults.standard.set(autoPasteEnabled, forKey: "autoPasteEnabled")
@@ -50,6 +56,8 @@ final class SettingsManager {
             .flatMap(TranscriptionProvider.init(rawValue:))
         self.transcriptionProvider = savedProvider ?? .openAI
         self.transcriptionPrompt = UserDefaults.standard.string(forKey: "transcriptionPrompt") ?? ""
+        self.submitAfterContinuous = UserDefaults.standard.bool(forKey: "submitAfterContinuous")
+        self.submitAfterHold = UserDefaults.standard.bool(forKey: "submitAfterHold")
         self.autoPasteEnabled = UserDefaults.standard.bool(forKey: "autoPasteEnabled")
         self.elevenLabsSpeakerRecognitionEnabled = UserDefaults.standard.bool(forKey: "elevenLabsSpeakerRecognitionEnabled")
         self.elevenLabsSpeakerLibraryRecognitionEnabled = UserDefaults.standard.bool(

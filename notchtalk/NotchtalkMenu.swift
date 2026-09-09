@@ -45,6 +45,7 @@ struct NotchtalkMenu: View {
                 shortcut("Press right ⌘", detail: "Start / stop instantly")
                 shortcut("Release before 0.8s", detail: "Keep recording")
                 shortcut("Hold beyond 0.8s", detail: "Release to finish")
+                shortcut("Enter while recording", detail: "Finish & send")
                 shortcut("Esc", detail: "Cancel")
             }
             Divider()

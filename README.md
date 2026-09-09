@@ -152,3 +152,7 @@ Issues and pull requests are welcome, especially around:
 The menu bar panel offers **Copy latest** for the most recent successful attempt in the current app run. Starting another attempt immediately disables it; failure, cancellation, or an empty result never falls back to an older transcript. History remains available separately.
 
 Press right Command to start recording immediately. Release within 800 ms to keep recording; press again to finish. Hold beyond 800 ms and release to finish instead. Escape cancels. Combining the key with other keys cancels the shortcut gesture.
+
+### Sending with Enter
+
+Settings offers separate **Send with Enter after holding** and **Send with Enter after continuous recording** switches, both off by default. Sending pastes the successful transcript and then simulates Enter in the target app, even when Auto-paste is off. During continuous recording, bare Return/Enter always finishes and sends; the original key press is consumed so it cannot submit before transcription completes. Cancellation and failed transcription do not send. Manual retries and history retranscription do not inherit send intent.
