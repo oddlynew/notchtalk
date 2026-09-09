@@ -8,7 +8,7 @@ struct ShortcutGestureTests {
   #expect(gesture.release() == .none)
   #expect(gesture.press(allowed: true))
   #expect(!gesture.press(allowed: true))
-  #expect(gesture.release() == .toggle)
+  #expect(gesture.release() == .none)
   #expect(!gesture.threshold())
   #expect(gesture.press(allowed: true))
   #expect(gesture.threshold())
@@ -25,6 +25,11 @@ struct ShortcutGestureTests {
   #expect(gesture.threshold())
   gesture.cancel()
   #expect(gesture.release() == .none)
+
+  #expect(gesture.press(allowed: true, now: 10))
+  #expect(gesture.release(now: 10.79) == .none)
+  #expect(gesture.press(allowed: true, now: 20))
+  #expect(gesture.release(now: 20.81) == .endHold)
 
  }
 }

@@ -17,7 +17,7 @@ final class HotKeyManager: @unchecked Sendable {
     private var holdTimer: DispatchWorkItem?
 
     var onToggle: (@MainActor () -> Void)?
-    var onHoldStart: (@MainActor () -> Void)?
+    var onChordCancel: (@MainActor () -> Void)?
     var onHoldEnd: (@MainActor () -> Void)?
     var onCancel: (@MainActor () -> Void)?
 
@@ -78,7 +78,7 @@ final class HotKeyManager: @unchecked Sendable {
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             lock.lock()
-            let wasHolding = gesture.holding
+            let wasHolding = gesture.down
             gesture.cancel()
             holdTimer?.cancel()
             lock.unlock()
@@ -92,12 +92,14 @@ final class HotKeyManager: @unchecked Sendable {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
         if type == .keyDown || (type == .flagsChanged && keyCode != 54) {
             lock.lock()
-            let wasHolding = gesture.holding
+            let wasHolding = gesture.down
             gesture.cancel()
             holdTimer?.cancel()
             lock.unlock()
-            if keyCode == 53 || wasHolding {
+            if keyCode == 53 {
                 DispatchQueue.main.async { [weak self] in self?.onCancel?() }
+            } else if wasHolding {
+                DispatchQueue.main.async { [weak self] in self?.onChordCancel?() }
             }
         } else if type == .flagsChanged && keyCode == 54 {
             // Device-specific flags distinguish right Command from a held left Command.
@@ -106,12 +108,12 @@ final class HotKeyManager: @unchecked Sendable {
             if pressed {
                 let modifiers = event.flags.intersection([.maskShift, .maskControl, .maskAlternate])
                 if gesture.press(allowed: modifiers.isEmpty) {
+                    DispatchQueue.main.async { [weak self] in self?.onToggle?() }
                     let timer = DispatchWorkItem { [weak self] in
                         guard let self else { return }
                         self.lock.lock()
-                        let start = self.gesture.threshold()
+                        _ = self.gesture.threshold()
                         self.lock.unlock()
-                        if start { MainActor.assumeIsolated { self.onHoldStart?() } }
                     }
                     holdTimer = timer
                     DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(800), execute: timer)
@@ -123,7 +125,6 @@ final class HotKeyManager: @unchecked Sendable {
                 lock.unlock()
                 DispatchQueue.main.async { [weak self] in
                     switch action {
-                    case .toggle: self?.onToggle?()
                     case .endHold: self?.onHoldEnd?()
                     case .none: break
                     }

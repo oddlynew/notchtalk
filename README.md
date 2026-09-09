@@ -151,4 +151,4 @@ Issues and pull requests are welcome, especially around:
 
 The menu bar panel offers **Copy latest** for the most recent successful attempt in the current app run. Starting another attempt immediately disables it; failure, cancellation, or an empty result never falls back to an older transcript. History remains available separately.
 
-Tap right Command to start recording on release; tap again to finish. Hold right Command for 800 ms to start recording, then release to finish. Escape cancels. Combining the key with other keys cancels the shortcut gesture.
+Press right Command to start recording immediately. Release within 800 ms to keep recording; press again to finish. Hold beyond 800 ms and release to finish instead. Escape cancels. Combining the key with other keys cancels the shortcut gesture.
