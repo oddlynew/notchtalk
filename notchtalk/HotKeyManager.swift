@@ -15,9 +15,11 @@ final class HotKeyManager: @unchecked Sendable {
     private let lock = NSLock()
     private var gesture = ShortcutGesture()
     private var holdTimer: DispatchWorkItem?
+    private var currentHoldDelay: TimeInterval = 0.8
 
     private var suppressReturn = false
     var onSubmit: (@MainActor () -> Bool)?
+    var onRelease: (@MainActor () -> Void)?
     var onToggle: (@MainActor () -> Void)?
     var onChordCancel: (@MainActor () -> Void)?
     var onHoldEnd: (@MainActor () -> Void)?
@@ -131,6 +133,7 @@ final class HotKeyManager: @unchecked Sendable {
             if pressed {
                 let modifiers = event.flags.intersection([.maskShift, .maskControl, .maskAlternate])
                 if gesture.press(allowed: modifiers.isEmpty) {
+                    currentHoldDelay = MainActor.assumeIsolated { SettingsManager.shared.startHoldDelay }
                     DispatchQueue.main.async { [weak self] in self?.onToggle?() }
                     let timer = DispatchWorkItem { [weak self] in
                         guard let self else { return }
@@ -139,14 +142,15 @@ final class HotKeyManager: @unchecked Sendable {
                         self.lock.unlock()
                     }
                     holdTimer = timer
-                    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(800), execute: timer)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + currentHoldDelay, execute: timer)
                 }
                 lock.unlock()
             } else {
                 holdTimer?.cancel()
-                let action = gesture.release()
+                let action = gesture.release(holdDelay: currentHoldDelay)
                 lock.unlock()
                 DispatchQueue.main.async { [weak self] in
+                    self?.onRelease?()
                     switch action {
                     case .endHold: self?.onHoldEnd?()
                     case .none: break

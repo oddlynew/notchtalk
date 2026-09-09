@@ -31,5 +31,10 @@ struct ShortcutGestureTests {
   #expect(gesture.press(allowed: true, now: 20))
   #expect(gesture.release(now: 20.81) == .endHold)
 
+  #expect(gesture.press(allowed: true, now: 30))
+  #expect(gesture.release(now: 30.4, holdDelay: 0.3) == .endHold)
+  #expect(gesture.press(allowed: true, now: 40))
+  #expect(gesture.release(now: 40.9, holdDelay: 1.2) == .none)
+
  }
 }

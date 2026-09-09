@@ -155,4 +155,10 @@ Press right Command to start recording immediately. Release within 800 ms to kee
 
 ### Sending with Enter
 
-Settings offers separate **Send with Enter after holding** and **Send with Enter after continuous recording** switches, both off by default. Sending pastes the successful transcript and then simulates Enter in the target app, even when Auto-paste is off. During continuous recording, bare Return/Enter always finishes and sends; the original key press is consumed so it cannot submit before transcription completes. Cancellation and failed transcription do not send. Manual retries and history retranscription do not inherit send intent.
+One **Send with Enter after transcription** preference applies to both recording modes (existing enabled preferences migrate to it). No extra toggle shortcut is needed.
+
+To finish continuous recording, press right Command again. An Enter progress bar fills for 800 ms: release early to transcribe without sending, or keep holding until full to finish and send. This explicit gesture overrides the default sending preference. Other key combinations abandon the finish gesture and keep recording; Escape cancels. Bare Enter during continuous recording still finishes and sends directly.
+
+Sending pastes the successful transcript and then simulates Enter, including when Auto-paste is off. Failures and cancellation do not send; retries and history retranscription do not inherit send intent.
+
+The start hold threshold and finish/send threshold are independently adjustable in Settings from 200–2000 ms, in 50 ms steps. Both default to 800 ms and are captured when the corresponding gesture starts.

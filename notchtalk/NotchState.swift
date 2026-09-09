@@ -25,6 +25,9 @@ final class NotchStateManager {
 
     // Cleared for every new attempt, including attempts that never reach the provider.
     var latestTranscript: String?
+    var finishProgress: Double?
+    private var finishTask: Task<Void, Never>?
+    private var finishDeadline: TimeInterval?
     var state: AppState = .idle
     var audioLevel: CGFloat = 0.0
     var recordingDuration: TimeInterval = 0
@@ -65,7 +68,7 @@ final class NotchStateManager {
         case .idle:
             startRecording()
         case .recording:
-            stopRecording(submitAfterPaste: SettingsManager.shared.submitAfterContinuous, trigger: trigger)
+            stopRecording(submitAfterPaste: SettingsManager.shared.sendWithEnter, trigger: trigger)
         case .processing:
             break
         case .done, .error:
@@ -128,7 +131,45 @@ final class NotchStateManager {
         }
     }
 
+    func beginFinishGesture() {
+        guard state == .recording, finishProgress == nil else { return }
+        finishProgress = 0
+        let duration = SettingsManager.shared.finishHoldDelay
+        let started = ProcessInfo.processInfo.systemUptime
+        finishDeadline = started + duration
+        finishTask = Task {
+            while !Task.isCancelled {
+                let progress = min(1, (ProcessInfo.processInfo.systemUptime - started) / duration)
+                finishProgress = progress
+                if progress >= 1 {
+                    finishProgress = nil
+                    stopRecording(submitAfterPaste: true)
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
+    func abandonFinishGesture() {
+        finishTask?.cancel()
+        finishTask = nil
+        finishProgress = nil
+    }
+
+    func releaseFinishGesture() {
+        guard finishProgress != nil, state == .recording else { return }
+        let shouldSend = finishDeadline.map { ProcessInfo.processInfo.systemUptime >= $0 } ?? false
+        finishTask?.cancel()
+        finishTask = nil
+        finishProgress = nil
+        stopRecording(submitAfterPaste: shouldSend)
+    }
+
     func stopRecording(submitAfterPaste: Bool = false, trigger: String = "programmatic") {
+        finishTask?.cancel()
+        finishTask = nil
+        finishProgress = nil
         recordingTask?.cancel()
         recordingTask = nil
 
@@ -416,6 +457,9 @@ final class NotchStateManager {
     }
 
     func reset() {
+        finishTask?.cancel()
+        finishTask = nil
+        finishProgress = nil
         AudioDuckingService.shared.endDucking()
         stopProcessingTimer()
         state = .idle

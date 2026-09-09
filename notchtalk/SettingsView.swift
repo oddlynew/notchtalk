@@ -156,9 +156,16 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Auto-paste after transcription", isOn: $settingsManager.autoPasteEnabled)
-                Toggle("Send with Enter after holding", isOn: $settingsManager.submitAfterHold)
-                Toggle("Send with Enter after continuous recording", isOn: $settingsManager.submitAfterContinuous)
-                Text("Choose automatic sending separately for hold and continuous recording. Enter during continuous recording always finishes, pastes and sends. Sending also pastes when Auto-paste is off.")
+                VStack(alignment: .leading) {
+                    LabeledContent("Hold mode after", value: "\(Int(settingsManager.startHoldDelay * 1000)) ms")
+                    Slider(value: $settingsManager.startHoldDelay, in: 0.2...2, step: 0.05)
+                        .accessibilityLabel("Hold mode threshold")
+                    LabeledContent("Hold to send for", value: "\(Int(settingsManager.finishHoldDelay * 1000)) ms")
+                    Slider(value: $settingsManager.finishHoldDelay, in: 0.2...2, step: 0.05)
+                        .accessibilityLabel("Hold to send threshold")
+                }
+                Toggle("Send with Enter after transcription", isOn: $settingsManager.sendWithEnter)
+                Text("When finishing continuous recording, hold right Command until the Enter bar fills to send, or release early to transcribe without sending. Enter also finishes and sends directly.")
                     .font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Recording retention", value: "24 hours")
             } header: {

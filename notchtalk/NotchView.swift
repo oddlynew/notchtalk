@@ -49,6 +49,16 @@ struct NotchView: View {
                     .frame(width: 8, height: 8)
                     .modifier(PulseModifier())
 
+                if let progress = stateManager.finishProgress {
+                    VStack(spacing: 3) {
+                        Text("Enter").font(.system(size: 10, weight: .medium))
+                        ProgressView(value: progress).progressViewStyle(.linear)
+                            .tint(NotchtalkStyle.recording)
+                    }
+                    .foregroundStyle(.white.opacity(0.8))
+                    .frame(width: 70)
+                }
+
                 // Timer
                 Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -57,8 +67,10 @@ struct NotchView: View {
                     .contentTransition(.numericText())
 
                 // Visualizer
-                AudioVisualizerView(level: stateManager.audioLevel)
-                    .frame(width: 60, height: 16)
+                if stateManager.finishProgress == nil {
+                    AudioVisualizerView(level: stateManager.audioLevel)
+                        .frame(width: 60, height: 16)
+                }
             }
 
         case .processing:
