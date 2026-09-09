@@ -157,10 +157,12 @@ Press right Command to start recording immediately. Release within 800 ms to kee
 
 One **Send with Enter after transcription** preference applies to both recording modes (existing enabled preferences migrate to it). No extra toggle shortcut is needed.
 
-To finish continuous recording, press right Command again. An Enter progress bar fills for 800 ms: release early to transcribe without sending, or keep holding until full to finish and send. This explicit gesture overrides the default sending preference. Other key combinations abandon the finish gesture and keep recording; Escape cancels. Bare Enter during continuous recording still finishes and sends directly.
+To finish continuous recording, press right Command again. An Enter progress bar fills for 800 ms: release early to transcribe without sending, or keep holding until full to finish and send. This explicit gesture overrides the default sending preference. Other key combinations abandon the finish gesture and keep recording; Escape cancels.
 
 Sending pastes the successful transcript and then simulates Enter, including when Auto-paste is off. Failures and cancellation do not send; retries and history retranscription do not inherit send intent.
 
 The start hold threshold and finish/send threshold are independently adjustable in Settings from 200–2000 ms, in 50 ms steps. The start threshold defaults to 800 ms and the finish/send threshold to 600 ms. Each is captured when its gesture starts.
 
 Releasing a hold-mode recording never submits with Enter, regardless of the automatic-send preference. Normal Auto-paste/copy behavior is preserved.
+
+Enter/Return is not a Notchtalk shortcut and is never intercepted; it keeps its normal behavior in the focused application.

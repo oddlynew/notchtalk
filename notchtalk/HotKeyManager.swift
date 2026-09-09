@@ -17,8 +17,6 @@ final class HotKeyManager: @unchecked Sendable {
     private var holdTimer: DispatchWorkItem?
     private var currentHoldDelay: TimeInterval = 0.8
 
-    private var suppressReturn = false
-    var onSubmit: (@MainActor () -> Bool)?
     var onRelease: (@MainActor () -> Void)?
     var onToggle: (@MainActor () -> Void)?
     var onChordCancel: (@MainActor () -> Void)?
@@ -39,12 +37,12 @@ final class HotKeyManager: @unchecked Sendable {
             return
         }
 
-        let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+        let eventMask: CGEventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .defaultTap,
+            options: .listenOnly,
             eventsOfInterest: eventMask,
             callback: { proxy, type, event, refcon in
                 guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
@@ -97,24 +95,6 @@ final class HotKeyManager: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        if keyCode == 36 || keyCode == 76 {
-            if suppressReturn {
-                if type == .keyUp { suppressReturn = false }
-                return nil
-            }
-            let modifiers = event.flags.intersection([.maskCommand, .maskShift, .maskControl, .maskAlternate])
-            if type == .keyDown && modifiers.isEmpty {
-                lock.lock()
-                let continuous = !gesture.down
-                lock.unlock()
-                // The event tap is attached to the main run loop. Consume Enter before
-                // the target app can submit the still-unfinished text.
-                if continuous && MainActor.assumeIsolated({ onSubmit?() ?? false }) {
-                    suppressReturn = true
-                    return nil
-                }
-            }
-        }
         if type == .keyDown || (type == .flagsChanged && keyCode != 54) {
             lock.lock()
             let wasHolding = gesture.down
