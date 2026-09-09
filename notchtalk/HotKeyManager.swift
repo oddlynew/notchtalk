@@ -13,10 +13,12 @@ final class HotKeyManager: @unchecked Sendable {
     private var runLoopSource: CFRunLoopSource?
 
     private let lock = NSLock()
-    private var _rightCommandDownTime: Date?
-    private var _otherKeyPressed = false
+    private var gesture = ShortcutGesture()
+    private var holdTimer: DispatchWorkItem?
 
     var onToggle: (@MainActor () -> Void)?
+    var onHoldStart: (@MainActor () -> Void)?
+    var onHoldEnd: (@MainActor () -> Void)?
     var onCancel: (@MainActor () -> Void)?
 
     private init() {}
@@ -59,6 +61,10 @@ final class HotKeyManager: @unchecked Sendable {
     }
 
     func stop() {
+        lock.lock()
+        gesture.cancel()
+        holdTimer?.cancel()
+        lock.unlock()
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
@@ -71,58 +77,55 @@ final class HotKeyManager: @unchecked Sendable {
 
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            lock.lock()
+            let wasHolding = gesture.holding
+            gesture.cancel()
+            holdTimer?.cancel()
+            lock.unlock()
+            if wasHolding { DispatchQueue.main.async { [weak self] in self?.onCancel?() } }
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
             return Unmanaged.passUnretained(event)
         }
 
-        if type == .keyDown {
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            if keyCode == 53 {
-                let isAutoRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-                guard !isAutoRepeat else {
-                    return Unmanaged.passUnretained(event)
-                }
-                DispatchQueue.main.async { [weak self] in
-                    self?.onCancel?()
-                }
-                return Unmanaged.passUnretained(event)
-            }
-
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        if type == .keyDown || (type == .flagsChanged && keyCode != 54) {
             lock.lock()
-            _otherKeyPressed = true
+            let wasHolding = gesture.holding
+            gesture.cancel()
+            holdTimer?.cancel()
             lock.unlock()
-            return Unmanaged.passUnretained(event)
-        }
-
-        if type == .flagsChanged {
-            let flags = event.flags
-            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-
-            let isRightCommand = keyCode == 54
-            let commandPressed = flags.contains(.maskCommand)
-
-            if isRightCommand {
-                lock.lock()
-                if commandPressed {
-                    _rightCommandDownTime = Date()
-                    _otherKeyPressed = false
-                    lock.unlock()
-                } else {
-                    let downTime = _rightCommandDownTime
-                    let otherPressed = _otherKeyPressed
-                    _rightCommandDownTime = nil
-                    _otherKeyPressed = false
-                    lock.unlock()
-
-                    if let downTime = downTime, !otherPressed {
-                        let duration = Date().timeIntervalSince(downTime)
-                        if duration < 0.4 {
-                            DispatchQueue.main.async { [weak self] in
-                                self?.onToggle?()
-                            }
-                        }
+            if keyCode == 53 || wasHolding {
+                DispatchQueue.main.async { [weak self] in self?.onCancel?() }
+            }
+        } else if type == .flagsChanged && keyCode == 54 {
+            // Device-specific flags distinguish right Command from a held left Command.
+            let pressed = event.flags.rawValue & UInt64(NX_DEVICERCMDKEYMASK) != 0
+            lock.lock()
+            if pressed {
+                let modifiers = event.flags.intersection([.maskShift, .maskControl, .maskAlternate])
+                if gesture.press(allowed: modifiers.isEmpty) {
+                    let timer = DispatchWorkItem { [weak self] in
+                        guard let self else { return }
+                        self.lock.lock()
+                        let start = self.gesture.threshold()
+                        self.lock.unlock()
+                        if start { MainActor.assumeIsolated { self.onHoldStart?() } }
+                    }
+                    holdTimer = timer
+                    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(800), execute: timer)
+                }
+                lock.unlock()
+            } else {
+                holdTimer?.cancel()
+                let action = gesture.release()
+                lock.unlock()
+                DispatchQueue.main.async { [weak self] in
+                    switch action {
+                    case .toggle: self?.onToggle?()
+                    case .endHold: self?.onHoldEnd?()
+                    case .none: break
                     }
                 }
             }

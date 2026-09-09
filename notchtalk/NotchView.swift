@@ -23,7 +23,8 @@ struct NotchView: View {
                     .padding(.vertical, 10)
                     .background(
                         Capsule()
-                            .fill(.black)
+                            .fill(Color(red: 0.055, green: 0.075, blue: 0.075))
+                            .overlay(Capsule().strokeBorder(.white.opacity(0.14), lineWidth: 1))
                             .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
                     )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -44,7 +45,7 @@ struct NotchView: View {
             HStack(spacing: 12) {
                 // Red pulsing dot
                 Circle()
-                    .fill(.red)
+                    .fill(.mint)
                     .frame(width: 8, height: 8)
                     .modifier(PulseModifier())
 

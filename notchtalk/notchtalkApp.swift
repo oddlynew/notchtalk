@@ -14,42 +14,9 @@ struct notchtalkApp: App {
 
     var body: some Scene {
         MenuBarExtra("Notchtalk", systemImage: appController.menuBarIcon) {
-            if !appController.hasAccessibilityPermission {
-                Text("Accessibility Permission Required")
-                    .font(.headline)
-                Button("Grant Permission...") {
-                    appController.openAccessibilitySettings()
-                }
-                Divider()
-            }
-
-            if !appController.hasMicrophonePermission {
-                Text("Microphone Permission Required")
-                    .font(.headline)
-                Button("Grant Permission...") {
-                    appController.requestMicrophonePermission()
-                }
-                Divider()
-            }
-
-            Button("Settings...") {
-                SettingsWindowController.show()
-            }
-            .keyboardShortcut(",")
-
-            Divider()
-
-            Button("About Notchtalk") {
-                appController.showAbout()
-            }
-
-            Divider()
-
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
-            }
-            .keyboardShortcut("q")
+            NotchtalkMenu(controller: appController)
         }
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -74,6 +41,14 @@ final class AppController {
 
         HotKeyManager.shared.onToggle = { [weak self] in
             self?.stateManager.toggle(trigger: "right_command_hotkey")
+        }
+        HotKeyManager.shared.onHoldStart = { [weak self] in
+            guard let self, self.stateManager.state != .recording else { return }
+            self.stateManager.toggle()
+        }
+        HotKeyManager.shared.onHoldEnd = { [weak self] in
+            guard let self, self.stateManager.state == .recording else { return }
+            self.stateManager.stopRecording()
         }
         HotKeyManager.shared.onCancel = { [weak self] in
             guard let self else { return }
@@ -152,7 +127,7 @@ final class AppController {
     func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notchtalk"
-        alert.informativeText = "Press Right ⌘ to start/stop recording.\nPress Esc to cancel recording/transcription immediately. Cancelled audio remains retryable for 24 hours.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
+        alert.informativeText = "Tap Right ⌘ to start/stop on release. Hold for 0.8 seconds to record until release.\nPress Esc to cancel recording/transcription.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
         alert.alertStyle = .informational
         alert.runModal()
     }

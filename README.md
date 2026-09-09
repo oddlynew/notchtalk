@@ -146,3 +146,9 @@ Issues and pull requests are welcome, especially around:
 - making builds more portable across macOS versions
 - robustness around permissions and error states
 - improving the signing/notarization story for reproducible installs
+
+### Menu and shortcut
+
+The menu bar panel offers **Copy latest** for the most recent successful attempt in the current app run. Starting another attempt immediately disables it; failure, cancellation, or an empty result never falls back to an older transcript. History remains available separately.
+
+Tap right Command to start recording on release; tap again to finish. Hold right Command for 800 ms to start recording, then release to finish. Escape cancels. Combining the key with other keys cancels the shortcut gesture.

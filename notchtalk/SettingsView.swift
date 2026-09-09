@@ -61,21 +61,41 @@ struct SettingsView: View {
     @State private var historyDetailsMode: HistoryDetailsMode = .transcript
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            historyTab
-                .tabItem {
-                    Label("History", systemImage: "clock.arrow.circlepath")
-                }
-                .tag(SettingsTab.history)
-
-            settingsTab
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .tag(SettingsTab.settings)
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Notchtalk", systemImage: "waveform")
+                    .font(.system(size: 19, weight: .semibold, design: .rounded))
+                    .padding(.bottom, 24).foregroundStyle(.mint)
+                navigationItem("History", icon: "clock.arrow.circlepath", tab: .history)
+                navigationItem("Settings", icon: "slider.horizontal.3", tab: .settings)
+                Spacer()
+                Text("Your voice, in words.").font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(20).frame(width: 190).background(.quaternary.opacity(0.35))
+            Divider()
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(selectedTab == .history ? "Transcripts" : "Make it yours")
+                        .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    Text(selectedTab == .history ? "Revisit your recordings and their transcripts." : "Recording, transcription and output preferences.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }.padding(24)
+                Divider()
+                if selectedTab == .history { historyTab } else { settingsTab }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 760, height: 520)
+        .tint(.mint)
+        .frame(width: 940, height: 620)
         .navigationTitle("Notchtalk")
+    }
+
+    private func navigationItem(_ title: String, icon: String, tab: SettingsTab) -> some View {
+        Button { selectedTab = tab } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 13, weight: .medium))
+                .frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                .background(selectedTab == tab ? Color.mint.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 9))
+        }.buttonStyle(.plain)
     }
 
     private var settingsTab: some View {
