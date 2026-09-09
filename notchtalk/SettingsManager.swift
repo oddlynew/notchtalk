@@ -22,11 +22,14 @@ final class SettingsManager {
             UserDefaults.standard.set(transcriptionPrompt, forKey: "transcriptionPrompt")
         }
     }
-    var submitAfterContinuous: Bool {
-        didSet { UserDefaults.standard.set(submitAfterContinuous, forKey: "submitAfterContinuous") }
+    var startHoldDelay: Double {
+        didSet { UserDefaults.standard.set(startHoldDelay, forKey: "startHoldDelay") }
     }
-    var submitAfterHold: Bool {
-        didSet { UserDefaults.standard.set(submitAfterHold, forKey: "submitAfterHold") }
+    var finishHoldDelay: Double {
+        didSet { UserDefaults.standard.set(finishHoldDelay, forKey: "finishHoldDelay") }
+    }
+    var sendWithEnter: Bool {
+        didSet { UserDefaults.standard.set(sendWithEnter, forKey: "sendWithEnter") }
     }
     var autoPasteEnabled: Bool {
         didSet {
@@ -56,8 +59,13 @@ final class SettingsManager {
             .flatMap(TranscriptionProvider.init(rawValue:))
         self.transcriptionProvider = savedProvider ?? .openAI
         self.transcriptionPrompt = UserDefaults.standard.string(forKey: "transcriptionPrompt") ?? ""
-        self.submitAfterContinuous = UserDefaults.standard.bool(forKey: "submitAfterContinuous")
-        self.submitAfterHold = UserDefaults.standard.bool(forKey: "submitAfterHold")
+        let defaults = UserDefaults.standard
+        self.startHoldDelay = min(2, max(0.2, defaults.object(forKey: "startHoldDelay") as? Double ?? 0.8))
+        self.finishHoldDelay = min(2, max(0.2, defaults.object(forKey: "finishHoldDelay") as? Double ?? 0.8))
+        self.sendWithEnter = defaults.object(forKey: "sendWithEnter") as? Bool
+            ?? (defaults.bool(forKey: "submitAfterContinuous") || defaults.bool(forKey: "submitAfterHold"))
+        defaults.removeObject(forKey: "submitAfterContinuous")
+        defaults.removeObject(forKey: "submitAfterHold")
         self.autoPasteEnabled = UserDefaults.standard.bool(forKey: "autoPasteEnabled")
         self.elevenLabsSpeakerRecognitionEnabled = UserDefaults.standard.bool(forKey: "elevenLabsSpeakerRecognitionEnabled")
         self.elevenLabsSpeakerLibraryRecognitionEnabled = UserDefaults.standard.bool(
@@ -65,6 +73,7 @@ final class SettingsManager {
         )
         self.hasOpenAIAPIKey = KeychainService.hasAPIKey(for: .openAI)
         self.hasElevenLabsAPIKey = KeychainService.hasAPIKey(for: .elevenLabs)
+        defaults.set(self.sendWithEnter, forKey: "sendWithEnter")
     }
 
     func hasAPIKey(for provider: TranscriptionProvider) -> Bool {

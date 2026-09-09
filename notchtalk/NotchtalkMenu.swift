@@ -5,6 +5,7 @@ struct NotchtalkMenu: View {
     let controller: AppController
     private let manager = NotchStateManager.shared
     @State private var copied = false
+    @Bindable private var settings = SettingsManager.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -41,10 +42,13 @@ struct NotchtalkMenu: View {
             }
             .padding(14).background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055)))
+            Toggle("Send with Enter", isOn: $settings.sendWithEnter)
+                .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
             VStack(spacing: 9) {
-                shortcut("Press right ⌘", detail: "Start / stop instantly")
-                shortcut("Release before 0.8s", detail: "Keep recording")
-                shortcut("Hold beyond 0.8s", detail: "Release to finish")
+                shortcut("Press right ⌘", detail: "Start recording")
+                shortcut("Release before \(Int(settings.startHoldDelay * 1000)) ms", detail: "Keep recording")
+                shortcut("Hold beyond \(Int(settings.startHoldDelay * 1000)) ms", detail: "Release to finish")
+                shortcut("Hold again · \(Int(settings.finishHoldDelay * 1000)) ms", detail: "Finish & send")
                 shortcut("Enter while recording", detail: "Finish & send")
                 shortcut("Esc", detail: "Cancel")
             }

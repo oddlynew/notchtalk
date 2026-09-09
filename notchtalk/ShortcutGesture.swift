@@ -20,8 +20,8 @@ struct ShortcutGesture {
         holding = true
         return true
     }
-    mutating func release(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Action {
-        let action: Action = down && allowed ? ((holding || now - pressedAt >= 0.8) ? .endHold : .none) : .none
+    mutating func release(now: TimeInterval = ProcessInfo.processInfo.systemUptime, holdDelay: TimeInterval = 0.8) -> Action {
+        let action: Action = down && allowed ? ((holding || now - pressedAt >= holdDelay) ? .endHold : .none) : .none
         cancel()
         return action
     }
