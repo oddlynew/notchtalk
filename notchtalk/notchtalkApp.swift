@@ -66,7 +66,7 @@ final class AppController {
         HotKeyManager.shared.onHoldEnd = { [weak self] in
             guard let self, self.gestureStartedRecording, self.stateManager.state == .recording else { return }
             self.gestureStartedRecording = false
-            self.stateManager.stopRecording(submitAfterPaste: SettingsManager.shared.sendWithEnter)
+            self.stateManager.stopRecording(submitAfterPaste: false)
         }
         HotKeyManager.shared.onSubmit = { [weak self] in
             guard let self, self.stateManager.state == .recording else { return false }
