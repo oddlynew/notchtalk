@@ -7,6 +7,7 @@ import AppKit
 import Carbon
 
 enum ClipboardService {
+    static let syntheticEventTag: Int64 = 0x4E54414C4B
     private static let transientMarkerType = NSPasteboard.PasteboardType("com.notchtalk.transientPasteToken")
 
     private struct PasteboardSnapshot {
@@ -63,7 +64,9 @@ enum ClipboardService {
     }
 
     @MainActor
-    static func pastePreservingClipboard(_ text: String) {
+    static func pastePreservingClipboard(_ text: String, submit: Bool = false) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let pasteboard = NSPasteboard.general
         let snapshot = PasteboardSnapshot.capture(from: pasteboard)
         let token = UUID().uuidString
@@ -77,11 +80,15 @@ enum ClipboardService {
 
         // Wait for the pasteboard to update, then simulate Cmd+V, then restore the user's clipboard.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            simulatePaste()
+            let sameTarget = NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID
+            let pasted = sameTarget && simulatePaste()
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 // Avoid clobbering the user's clipboard if it changed after we set our transient value.
                 if pasteboardContainsTransientToken(token, in: pasteboard) {
+                    if submit && pasted && NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID {
+                        simulateEnter()
+                    }
                     snapshot.restore(to: pasteboard)
                 }
             }
@@ -97,20 +104,32 @@ enum ClipboardService {
         }
     }
 
-    private static func simulatePaste() {
+    private static func simulatePaste() -> Bool {
         // Key code for 'V' is 9
         let vKeyCode: CGKeyCode = 9
 
         // Create key down event with Command modifier
-        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: vKeyCode, keyDown: true) else { return }
+        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: vKeyCode, keyDown: true) else { return false }
         keyDown.flags = .maskCommand
 
         // Create key up event with Command modifier
-        guard let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: vKeyCode, keyDown: false) else { return }
+        guard let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: vKeyCode, keyDown: false) else { return false }
         keyUp.flags = .maskCommand
 
         // Post the events
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
+        return true
+    }
+
+    private static func simulateEnter() {
+        guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: true),
+              let up = CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: false) else { return }
+        down.setIntegerValueField(.eventSourceUserData, value: syntheticEventTag)
+        up.setIntegerValueField(.eventSourceUserData, value: syntheticEventTag)
+        down.flags = []
+        up.flags = []
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 }
