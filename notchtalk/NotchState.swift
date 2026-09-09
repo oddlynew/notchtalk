@@ -23,6 +23,8 @@ enum OutputDisposition: Equatable, Sendable {
 final class NotchStateManager {
     static let shared = NotchStateManager()
 
+    // Cleared for every new attempt, including attempts that never reach the provider.
+    var latestTranscript: String?
     var state: AppState = .idle
     var audioLevel: CGFloat = 0.0
     var recordingDuration: TimeInterval = 0
@@ -67,18 +69,24 @@ final class NotchStateManager {
         case .processing:
             break
         case .done, .error:
+            processingTask?.cancel()
             reset()
+            startRecording()
         }
     }
 
     func startRecording() {
+        processingTask?.cancel()
+        latestTranscript = nil
         let provider = SettingsManager.shared.transcriptionProvider
         guard KeychainService.hasAPIKey(for: provider) else {
             state = .error("No API key")
             SettingsWindowController.show()
 
-            Task {
+            processingTask?.cancel()
+            processingTask = Task {
                 try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
                 reset()
             }
             return
@@ -96,6 +104,7 @@ final class NotchStateManager {
 
         recordingTask = Task {
             do {
+                guard !Task.isCancelled else { return }
                 let recordingURL = try await audioRecorder.startRecording()
                 currentRecordingURL = recordingURL
                 activeDiagnosticsID = diagnosticsStore.startRecording(
@@ -187,6 +196,7 @@ final class NotchStateManager {
 
                 guard !Task.isCancelled else { return }
 
+                latestTranscript = transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : transcription
                 diagnosticsStore.markSucceeded(
                     for: diagnosticsID,
                     transcriptText: transcription,
@@ -265,8 +275,10 @@ final class NotchStateManager {
         guard FileManager.default.fileExists(atPath: url.path) else {
             state = .error("Missing audio")
             SoundManager.shared.playErrorSound()
-            Task {
+            processingTask?.cancel()
+            processingTask = Task {
                 try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
                 reset()
             }
             return
@@ -314,6 +326,7 @@ final class NotchStateManager {
 
                 guard !Task.isCancelled else { return }
 
+                latestTranscript = transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : transcription
                 diagnosticsStore.markSucceeded(
                     for: diagnosticsID,
                     transcriptText: transcription,
@@ -430,11 +443,15 @@ final class NotchStateManager {
             return
         }
 
+        processingTask?.cancel()
+        latestTranscript = nil
         guard let retainedAudioURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID) else {
             state = .error("No audio")
             SoundManager.shared.playErrorSound()
-            Task {
+            processingTask?.cancel()
+            processingTask = Task {
                 try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
                 reset()
             }
             return
@@ -443,8 +460,10 @@ final class NotchStateManager {
         if !FileManager.default.fileExists(atPath: retainedAudioURL.path) {
             state = .error("Missing audio")
             SoundManager.shared.playErrorSound()
-            Task {
+            processingTask?.cancel()
+            processingTask = Task {
                 try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
                 reset()
             }
             return
@@ -454,8 +473,10 @@ final class NotchStateManager {
         guard KeychainService.hasAPIKey(for: provider) else {
             state = .error("No API key")
             SettingsWindowController.show()
-            Task {
+            processingTask?.cancel()
+            processingTask = Task {
                 try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
                 reset()
             }
             return
@@ -499,6 +520,7 @@ final class NotchStateManager {
 
                 guard !Task.isCancelled else { return }
 
+                latestTranscript = transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : transcription
                 diagnosticsStore.markSucceeded(
                     for: diagnosticsID,
                     transcriptText: transcription,
