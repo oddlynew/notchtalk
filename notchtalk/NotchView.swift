@@ -19,6 +19,7 @@ struct NotchView: View {
 
             if isActive {
                 pillContent
+                    .frame(height: 20)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(
@@ -35,6 +36,13 @@ struct NotchView: View {
                                 .accessibilityHidden(true)
                             }
                             .overlay(Capsule().strokeBorder(.white.opacity(0.09), lineWidth: 1))
+                            .overlay {
+                                if stateManager.state == .processing {
+                                    ProcessingBorderLight()
+                                        .allowsHitTesting(false)
+                                        .accessibilityHidden(true)
+                                }
+                            }
                             .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
                     )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -42,7 +50,9 @@ struct NotchView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .animation(.smooth(duration: 0.25), value: isActive)
-        .animation(.spring(duration: 0.2), value: stateManager.state)
+        .animation(.smooth(duration: 0.25), value: stateManager.state)
+        .animation(.smooth(duration: 0.25), value: stateManager.pendingSubmit)
+        .animation(.smooth(duration: 0.25), value: stateManager.processingElapsed >= 10)
     }
 
     @ViewBuilder
@@ -87,18 +97,19 @@ struct NotchView: View {
 
         case .processing:
             HStack(spacing: 10) {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(.white)
+                Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .monospacedDigit()
 
-                VStack(alignment: .leading, spacing: 3) {
-                    AnimatedDotsText(text: stateManager.processingStatusText)
-                    Label(stateManager.pendingSubmit ? "Enter on · shortcut to cancel" : "Enter off",
-                          systemImage: stateManager.pendingSubmit ? "arrow.turn.down.left" : "minus.circle")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(stateManager.pendingSubmit ? NotchtalkStyle.recording : .white.opacity(0.65))
+                if stateManager.pendingSubmit {
+                    Text("Enter active")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color(red: 0.64, green: 0.86, blue: 0.72))
+                        .fixedSize()
+                        .help("Press the recording shortcut to turn off Enter for this transcription")
+                        .transition(.opacity)
                 }
-                .animation(.easeInOut(duration: 0.15), value: stateManager.pendingSubmit)
 
                 if stateManager.processingElapsed >= 10 {
                     Button {
@@ -120,6 +131,8 @@ struct NotchView: View {
                     .help("Cancel immediately")
                 }
             }
+            .accessibilityLabel("Transcribing")
+            .accessibilityValue(stateManager.pendingSubmit ? "Enter active" : "Enter off")
 
         case .done:
             HStack(spacing: 8) {
@@ -194,16 +207,27 @@ struct AudioVisualizerView: View {
     }
 }
 
-struct AnimatedDotsText: View {
-    let text: String
+/// A single highlight follows the capsule perimeter only while processing.
+struct ProcessingBorderLight: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.4)) { context in
-            let dotCount = Int(context.date.timeIntervalSinceReferenceDate / 0.4) % 4
-            Text("\(text)\(String(repeating: ".", count: dotCount))")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: 150, alignment: .center)
+        GeometryReader { geometry in
+            let radius = max(0, (geometry.size.height - 2) / 2)
+            let perimeter = 2 * max(0, geometry.size.width - geometry.size.height) + 2 * .pi * radius
+            let highlight = perimeter * 0.20
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { context in
+                let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2) / 2
+                Capsule()
+                    .inset(by: 1)
+                    .stroke(
+                        Color(red: 0.64, green: 0.86, blue: 0.72).opacity(0.85),
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round,
+                                           dash: reduceMotion ? [] : [highlight, perimeter - highlight],
+                                           dashPhase: -phase * perimeter)
+                    )
+                    .shadow(color: NotchtalkStyle.recording.opacity(0.45), radius: 3)
+            }
         }
     }
 }
