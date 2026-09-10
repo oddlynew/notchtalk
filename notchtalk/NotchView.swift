@@ -188,13 +188,14 @@ private struct RecordingMeter: View {
     private let weights: [CGFloat] = [0.70, 0.90, 1, 0.90, 0.70]
 
     var body: some View {
-        // Lift quiet speech while retaining the full range and a still silence baseline.
-        let response = pow(min(1, max(0, stateManager.audioLevel)), 0.65)
+        // Keep low-level room noise near the baseline, with the full height available for speech.
+        let level = min(1, max(0, (stateManager.audioLevel - 0.25) / 0.75))
+        let response = pow(level, 0.85)
         HStack(spacing: 3) {
             ForEach(weights.indices, id: \.self) { index in
                 Capsule()
                     .fill(Color(red: 0.64, green: 0.86, blue: 0.72))
-                    .frame(width: 3, height: 2 + 18 * weights[index] * response)
+                    .frame(width: 3, height: 1.5 + 18.5 * weights[index] * response)
             }
         }
         .animation(.easeOut(duration: 0.08), value: stateManager.audioLevel)
