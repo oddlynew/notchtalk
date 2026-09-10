@@ -151,7 +151,7 @@ Issues and pull requests are welcome, especially around:
 
 The menu bar panel offers **Copy latest** for the most recent successful attempt in the current app run. Starting another attempt immediately disables it; failure, cancellation, or an empty result never falls back to an older transcript. History remains available separately.
 
-Press right Command to start recording immediately. Release within 800 ms to keep recording; press again to finish. Hold beyond 800 ms and release to finish instead. Escape cancels. Combining the key with other keys cancels the shortcut gesture.
+Press right Command to start recording immediately. Release within 300 ms (the default) to keep recording; press again to finish. Hold beyond that threshold and release to finish instead. Escape cancels. Combining the key with other keys cancels the shortcut gesture.
 
 ### Sending with Enter
 
@@ -164,7 +164,7 @@ For a one-recording exception, hold Escape while still holding right Command:
 
 To finish continuous recording, press right Command again. Release before the background progress fills to transcribe without sending, or hold until full to finish and send. Holding Escape abandons this countdown and uses the release-order behavior above.
 
-Start and finish thresholds are separately adjustable from 200–2000 ms in 50 ms steps (defaults: 800 ms start, 600 ms finish). Enter/Return is not a recording shortcut. Failed/cancelled transcription never sends; manual retries/history do not inherit send intent. Sending pastes before simulating Enter, including when Auto-paste is disabled.
+Start and finish thresholds are separately adjustable from 200–2000 ms in 50 ms steps (defaults: 300 ms start, 300 ms finish; saved custom values are preserved). Enter/Return is not a recording shortcut. Failed/cancelled transcription never sends; manual retries/history do not inherit send intent. Sending pastes before simulating Enter, including when Auto-paste is disabled.
 
 ### Non-hold finish modes
 
