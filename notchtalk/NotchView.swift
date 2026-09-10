@@ -18,7 +18,7 @@ struct NotchView: View {
         case .idle: return 184
         case .recording: return 202
         case .processing:
-            return (stateManager.pendingSubmit ? 126 : 46)
+            return 78
                 + (stateManager.processingControlsAvailable ? 48 : 0)
         case .done: return 88
         case .error: return 180
@@ -63,7 +63,6 @@ struct NotchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .animation(.smooth(duration: 0.25), value: isActive)
         .animation(.easeInOut(duration: 0.32), value: contentWidth)
-        .animation(.easeInOut(duration: 0.22), value: stateManager.state)
         .animation(.easeInOut(duration: 0.32), value: stateManager.pendingSubmit)
         .animation(.easeInOut(duration: 0.32), value: stateManager.processingControlsAvailable)
     }
@@ -74,47 +73,8 @@ struct NotchView: View {
         case .idle:
             EmptyView()
 
-        case .recording:
-            RecordingContent(stateManager: stateManager)
-
-        case .processing:
-            HStack(spacing: 10) {
-                Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .monospacedDigit()
-
-                if stateManager.pendingSubmit {
-                    Text("Enter active")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color(red: 0.64, green: 0.86, blue: 0.72))
-                        .fixedSize()
-                        .help("Press the recording shortcut to turn off Enter for this transcription")
-                        .transition(.opacity)
-                }
-
-                if stateManager.processingControlsAvailable {
-                    Button {
-                        stateManager.retryProcessing()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .foregroundStyle(.white.opacity(0.9))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Retry transcription")
-
-                    Button {
-                        stateManager.cancel()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .foregroundStyle(.white.opacity(0.9))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Cancel immediately")
-                }
-            }
-            .accessibilityLabel("Transcribing")
-            .accessibilityValue(stateManager.pendingSubmit ? "Enter active" : "Enter off")
+        case .recording, .processing:
+            CaptureContent(stateManager: stateManager)
 
         case .done:
             HStack(spacing: 8) {
@@ -142,11 +102,14 @@ struct NotchView: View {
 // MARK: - Supporting Views
 
 @MainActor
-private struct RecordingContent: View {
+private struct CaptureContent: View {
     let stateManager: NotchStateManager
 
+    private var isRecording: Bool { stateManager.state == .recording }
+
     private var enterActive: Bool {
-        stateManager.isHoldRecording && SettingsManager.shared.sendWithEnter
+        if !isRecording { return stateManager.pendingSubmit }
+        return stateManager.isHoldRecording && SettingsManager.shared.sendWithEnter
             && !stateManager.noSendForRecording
     }
 
@@ -157,15 +120,18 @@ private struct RecordingContent: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RecordingMeter(stateManager: stateManager)
-                .frame(width: 28, height: 18)
-                .accessibilityHidden(true)
-
-            RecordingClock(stateManager: stateManager)
-
-            Capsule()
-                .fill(.white.opacity(0.12))
-                .frame(width: 1, height: 12)
+            if isRecording {
+                HStack(spacing: 12) {
+                    RecordingMeter(stateManager: stateManager)
+                        .frame(width: 28, height: 18)
+                        .accessibilityHidden(true)
+                    RecordingClock(stateManager: stateManager)
+                    Capsule()
+                        .fill(.white.opacity(0.12))
+                        .frame(width: 1, height: 12)
+                }
+                .transition(.opacity)
+            }
 
             Text(status)
                 .font(.system(size: 11, weight: .medium))
@@ -175,9 +141,22 @@ private struct RecordingContent: View {
                 .contentTransition(.opacity)
                 .frame(width: 78, alignment: .leading)
                 .animation(.easeInOut(duration: 0.22), value: status)
+
+            if !isRecording && stateManager.processingControlsAvailable {
+                Button { stateManager.retryProcessing() } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .help("Retry transcription")
+                Button { stateManager.cancel() } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .help("Cancel immediately")
+            }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Recording")
+        .accessibilityLabel(isRecording ? "Recording" : "Transcribing")
     }
 }
 
