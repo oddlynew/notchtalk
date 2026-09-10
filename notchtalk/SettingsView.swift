@@ -160,12 +160,22 @@ struct SettingsView: View {
                     LabeledContent("Hold mode after", value: "\(Int(settingsManager.startHoldDelay * 1000)) ms")
                     Slider(value: $settingsManager.startHoldDelay, in: 0.2...2, step: 0.05)
                         .accessibilityLabel("Hold mode threshold")
+                }
+                Picker("Non-hold mode", selection: $settingsManager.continuousFinishMode) {
+                    ForEach(ContinuousFinishMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                if settingsManager.continuousFinishMode == .holdToSend {
                     LabeledContent("Hold to send for", value: "\(Int(settingsManager.finishHoldDelay * 1000)) ms")
                     Slider(value: $settingsManager.finishHoldDelay, in: 0.2...2, step: 0.05)
                         .accessibilityLabel("Hold to send threshold")
+                } else {
+                    Text("Click to record, click again to transcribe. Enter starts off each time. During transcription, each further shortcut press toggles Enter for this run only.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("Auto-send on release", isOn: $settingsManager.sendWithEnter)
-                Text("In hold mode, release right Command to finish. Hold Escape while releasing Command to transcribe without sending this time. Releasing Escape first cancels. In continuous mode, the finish progress bar chooses whether to send.")
+                Text("In hold mode, release right Command to finish. Hold Escape while releasing Command to transcribe without sending this time. Releasing Escape first cancels. The non-hold setting applies to new recordings.")
                     .font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Recording retention", value: "24 hours")
             } header: {

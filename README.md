@@ -165,3 +165,7 @@ For a one-recording exception, hold Escape while still holding right Command:
 To finish continuous recording, press right Command again. Release before the background progress fills to transcribe without sending, or hold until full to finish and send. Holding Escape abandons this countdown and uses the release-order behavior above.
 
 Start and finish thresholds are separately adjustable from 200–2000 ms in 50 ms steps (defaults: 800 ms start, 600 ms finish). Enter/Return is not a recording shortcut. Failed/cancelled transcription never sends; manual retries/history do not inherit send intent. Sending pastes before simulating Enter, including when Auto-paste is disabled.
+
+### Non-hold finish modes
+
+Settings → Behavior → **Non-hold mode** keeps the existing **Hold to end + Enter** behavior by default. Choose **Click to end, then toggle Enter** to click once to record and again to transcribe with Enter off. While transcription is pending, further recording-shortcut presses toggle Enter for that run only. Enabling Enter also enables pasting for that run. Every new recording starts with Enter off in this mode; hold-to-record keeps its existing release behavior. Setting changes apply to the next recording.

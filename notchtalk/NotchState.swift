@@ -28,6 +28,8 @@ final class NotchStateManager {
     var isHoldRecording = false
     var noSendForRecording = false
     private(set) var pendingSubmit = false
+    private(set) var continuousFinishMode: ContinuousFinishMode = .holdToSend
+    private var canToggleProcessingEnter = false
     private var pasteForCurrentTranscription = false
     var finishProgress: Double?
     private var finishTask: Task<Void, Never>?
@@ -74,7 +76,14 @@ final class NotchStateManager {
         case .recording:
             stopRecording(submitAfterPaste: SettingsManager.shared.sendWithEnter, trigger: trigger)
         case .processing:
-            pendingSubmit = false
+            if canToggleProcessingEnter {
+                pendingSubmit.toggle()
+                // Enabling Enter must also insert the transcript, even with auto-paste off.
+                // Turning Enter back off retains the paste, matching the existing cancel-send UX.
+                pasteForCurrentTranscription = pasteForCurrentTranscription || pendingSubmit
+            } else {
+                pendingSubmit = false
+            }
         case .done, .error:
             processingTask?.cancel()
             reset()
@@ -83,7 +92,9 @@ final class NotchStateManager {
     }
 
     func startRecording() {
+        continuousFinishMode = SettingsManager.shared.continuousFinishMode
         pendingSubmit = false
+        canToggleProcessingEnter = false
         pasteForCurrentTranscription = false
         isHoldRecording = false
         noSendForRecording = false
@@ -191,7 +202,8 @@ final class NotchStateManager {
         currentRecordingURL = recordingURL
         let capturedRecordingDuration = recordingDuration
         currentRecordingDuration = capturedRecordingDuration
-        pendingSubmit = submitAfterPaste
+        canToggleProcessingEnter = !isHoldRecording && continuousFinishMode == .clickToToggleEnter
+        pendingSubmit = canToggleProcessingEnter ? false : submitAfterPaste
         pasteForCurrentTranscription = SettingsManager.shared.autoPasteEnabled || submitAfterPaste
         state = .processing
         retryAttempt = nil
@@ -468,6 +480,7 @@ final class NotchStateManager {
 
     func reset() {
         pendingSubmit = false
+        canToggleProcessingEnter = false
         pasteForCurrentTranscription = false
         isHoldRecording = false
         noSendForRecording = false
@@ -503,6 +516,7 @@ final class NotchStateManager {
 
         processingTask?.cancel()
         pendingSubmit = false
+        canToggleProcessingEnter = false
         pasteForCurrentTranscription = SettingsManager.shared.autoPasteEnabled
         latestTranscript = nil
         guard let retainedAudioURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID) else {
