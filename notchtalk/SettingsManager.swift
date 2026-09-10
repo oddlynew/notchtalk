@@ -5,6 +5,19 @@
 
 import SwiftUI
 
+enum ContinuousFinishMode: String, CaseIterable, Identifiable {
+    case holdToSend
+    case clickToToggleEnter
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .holdToSend: return "Hold to end + Enter"
+        case .clickToToggleEnter: return "Click to end, then toggle Enter"
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class SettingsManager {
@@ -27,6 +40,9 @@ final class SettingsManager {
     }
     var finishHoldDelay: Double {
         didSet { UserDefaults.standard.set(finishHoldDelay, forKey: "finishHoldDelay") }
+    }
+    var continuousFinishMode: ContinuousFinishMode {
+        didSet { UserDefaults.standard.set(continuousFinishMode.rawValue, forKey: "continuousFinishMode") }
     }
     var sendWithEnter: Bool {
         didSet { UserDefaults.standard.set(sendWithEnter, forKey: "sendWithEnter") }
@@ -60,6 +76,8 @@ final class SettingsManager {
         self.transcriptionProvider = savedProvider ?? .openAI
         self.transcriptionPrompt = UserDefaults.standard.string(forKey: "transcriptionPrompt") ?? ""
         let defaults = UserDefaults.standard
+        self.continuousFinishMode = defaults.string(forKey: "continuousFinishMode")
+            .flatMap(ContinuousFinishMode.init(rawValue:)) ?? .holdToSend
         self.startHoldDelay = min(2, max(0.2, defaults.object(forKey: "startHoldDelay") as? Double ?? 0.8))
         self.finishHoldDelay = min(2, max(0.2, defaults.object(forKey: "finishHoldDelay") as? Double ?? 0.6))
         self.sendWithEnter = defaults.object(forKey: "sendWithEnter") as? Bool
