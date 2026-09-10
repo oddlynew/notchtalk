@@ -61,6 +61,7 @@ final class NotchStateManager {
     private let diagnosticsStore = TranscriptionDiagnosticsStore.shared
     private var currentRecordingURL: URL?
     private var currentRecordingDuration: TimeInterval?
+    private var recordingAllowsEnter: Bool { (currentRecordingDuration ?? 0) >= 0.5 }
     private var activeDiagnosticsID: UUID?
 
     init() {
@@ -76,7 +77,7 @@ final class NotchStateManager {
         case .recording:
             stopRecording(submitAfterPaste: SettingsManager.shared.sendWithEnter, trigger: trigger)
         case .processing:
-            if canToggleProcessingEnter {
+            if canToggleProcessingEnter && recordingAllowsEnter {
                 pendingSubmit.toggle()
                 // Enabling Enter must also insert the transcript, even with auto-paste off.
                 // Turning Enter back off retains the paste, matching the existing cancel-send UX.
@@ -192,6 +193,7 @@ final class NotchStateManager {
         recordingTask?.cancel()
         recordingTask = nil
 
+        let capturedRecordingDuration = audioRecorder.recordedDuration
         guard let recordingURL = audioRecorder.stopRecording() else {
             AudioDuckingService.shared.endDucking()
             state = .error("No recording")
@@ -200,10 +202,10 @@ final class NotchStateManager {
         AudioDuckingService.shared.endDucking()
 
         currentRecordingURL = recordingURL
-        let capturedRecordingDuration = recordingDuration
+        recordingDuration = capturedRecordingDuration
         currentRecordingDuration = capturedRecordingDuration
         canToggleProcessingEnter = !isHoldRecording && continuousFinishMode == .clickToToggleEnter
-        pendingSubmit = canToggleProcessingEnter ? false : submitAfterPaste
+        pendingSubmit = !canToggleProcessingEnter && recordingAllowsEnter && submitAfterPaste
         pasteForCurrentTranscription = SettingsManager.shared.autoPasteEnabled || submitAfterPaste
         state = .processing
         retryAttempt = nil
@@ -272,7 +274,7 @@ final class NotchStateManager {
                 // Copy to clipboard and optionally paste
                 if pasteForCurrentTranscription {
                     lastOutputDisposition = .pastedToCursor
-                    ClipboardService.pastePreservingClipboard(transcription, submit: pendingSubmit)
+                    ClipboardService.pastePreservingClipboard(transcription, submit: pendingSubmit && recordingAllowsEnter)
                 } else {
                     lastOutputDisposition = .copiedToClipboard
                     ClipboardService.copy(transcription)
@@ -401,7 +403,7 @@ final class NotchStateManager {
 
                 if pasteForCurrentTranscription {
                     lastOutputDisposition = .pastedToCursor
-                    ClipboardService.pastePreservingClipboard(transcription, submit: pendingSubmit)
+                    ClipboardService.pastePreservingClipboard(transcription, submit: pendingSubmit && recordingAllowsEnter)
                 } else {
                     lastOutputDisposition = .copiedToClipboard
                     ClipboardService.copy(transcription)
@@ -443,6 +445,7 @@ final class NotchStateManager {
         processingTask?.cancel()
         processingTask = nil
 
+        if wasRecording { recordingDuration = audioRecorder.recordedDuration }
         if wasRecording, let recordingURL = audioRecorder.stopRecording() {
             currentRecordingURL = recordingURL
             currentRecordingDuration = recordingDuration

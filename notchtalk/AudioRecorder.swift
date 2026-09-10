@@ -15,6 +15,8 @@ final class AudioRecorder: NSObject {
 
     var onAudioLevelUpdate: ((CGFloat) -> Void)?
 
+    var recordedDuration: TimeInterval { audioRecorder?.currentTime ?? 0 }
+
     var isRecording: Bool {
         audioRecorder?.isRecording ?? false
     }
