@@ -166,12 +166,13 @@ struct SettingsView: View {
                         Text(mode.title).tag(mode)
                     }
                 }
-                if settingsManager.continuousFinishMode == .holdToSend {
+                VStack(alignment: .leading) {
                     LabeledContent("Hold to send for", value: "\(Int(settingsManager.finishHoldDelay * 1000)) ms")
                     Slider(value: $settingsManager.finishHoldDelay, in: 0.2...2, step: 0.05)
                         .accessibilityLabel("Hold to send threshold")
-                } else {
-                    Text("Click to record, click again to transcribe. Enter starts off each time. During transcription, each further shortcut press toggles Enter for this run only.")
+                }
+                if settingsManager.continuousFinishMode == .clickToToggleEnter {
+                    Text("Click to record. A short press ends with Enter off; hold to end with Enter on. During transcription, each further shortcut press toggles Enter for this run only.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("Auto-send on release", isOn: $settingsManager.sendWithEnter)

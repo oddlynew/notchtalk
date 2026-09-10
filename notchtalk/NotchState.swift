@@ -205,7 +205,7 @@ final class NotchStateManager {
         recordingDuration = capturedRecordingDuration
         currentRecordingDuration = capturedRecordingDuration
         canToggleProcessingEnter = !isHoldRecording && continuousFinishMode == .clickToToggleEnter
-        pendingSubmit = !canToggleProcessingEnter && recordingAllowsEnter && submitAfterPaste
+        pendingSubmit = recordingAllowsEnter && submitAfterPaste
         pasteForCurrentTranscription = SettingsManager.shared.autoPasteEnabled || submitAfterPaste
         state = .processing
         retryAttempt = nil
