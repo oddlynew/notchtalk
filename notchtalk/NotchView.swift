@@ -91,7 +91,14 @@ struct NotchView: View {
                     .controlSize(.small)
                     .tint(.white)
 
-                AnimatedDotsText(text: stateManager.processingStatusText)
+                VStack(alignment: .leading, spacing: 3) {
+                    AnimatedDotsText(text: stateManager.processingStatusText)
+                    Label(stateManager.pendingSubmit ? "Enter on · shortcut to cancel" : "Enter off",
+                          systemImage: stateManager.pendingSubmit ? "arrow.turn.down.left" : "minus.circle")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(stateManager.pendingSubmit ? NotchtalkStyle.recording : .white.opacity(0.65))
+                }
+                .animation(.easeInOut(duration: 0.15), value: stateManager.pendingSubmit)
 
                 if stateManager.processingElapsed >= 10 {
                     Button {
