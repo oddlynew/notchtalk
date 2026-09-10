@@ -77,7 +77,7 @@ final class SettingsManager {
         self.transcriptionPrompt = UserDefaults.standard.string(forKey: "transcriptionPrompt") ?? ""
         let defaults = UserDefaults.standard
         self.continuousFinishMode = defaults.string(forKey: "continuousFinishMode")
-            .flatMap(ContinuousFinishMode.init(rawValue:)) ?? .holdToSend
+            .flatMap(ContinuousFinishMode.init(rawValue:)) ?? .clickToToggleEnter
         self.startHoldDelay = min(2, max(0.2, defaults.object(forKey: "startHoldDelay") as? Double ?? 0.8))
         self.finishHoldDelay = min(2, max(0.2, defaults.object(forKey: "finishHoldDelay") as? Double ?? 0.6))
         self.sendWithEnter = defaults.object(forKey: "sendWithEnter") as? Bool
