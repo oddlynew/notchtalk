@@ -16,7 +16,7 @@ struct NotchView: View {
     private var contentWidth: CGFloat {
         switch stateManager.state {
         case .idle: return 184
-        case .recording: return 184
+        case .recording: return 202
         case .processing:
             return (stateManager.pendingSubmit ? 126 : 46)
                 + (stateManager.processingControlsAvailable ? 48 : 0)
@@ -145,88 +145,71 @@ struct NotchView: View {
 private struct RecordingContent: View {
     let stateManager: NotchStateManager
 
+    private var enterActive: Bool {
+        stateManager.isHoldRecording && SettingsManager.shared.sendWithEnter
+            && !stateManager.noSendForRecording
+    }
+
+    private var status: String {
+        if stateManager.finishProgress != nil { return "Hold to send" }
+        return enterActive ? "Enter active" : "Enter off"
+    }
+
     var body: some View {
-            HStack(spacing: 12) {
-                // Recording indicator
-                Circle()
-                    .fill(NotchtalkStyle.recording)
-                    .frame(width: 8, height: 8)
-                    .modifier(PulseModifier())
+        HStack(spacing: 12) {
+            RecordingMeter(stateManager: stateManager)
+                .frame(width: 28, height: 18)
+                .accessibilityHidden(true)
 
-                // Timer
-                Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+            RecordingClock(stateManager: stateManager)
 
-                // Visualizer
-                ZStack {
-                    if let progress = stateManager.finishProgress {
-                        Label("Enter", systemImage: "arrow.turn.down.left")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white)
-                            .accessibilityLabel("Hold to send")
-                            .accessibilityValue("\(Int(progress * 100)) percent")
-                    } else if stateManager.isHoldRecording || stateManager.noSendForRecording {
-                        Text(SettingsManager.shared.sendWithEnter && !stateManager.noSendForRecording ? "Release to send" : "Release to transcribe")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.85))
-                    } else {
-                        AudioVisualizerView(level: stateManager.audioLevel)
-                    }
-                }
-                .frame(width: 110, height: 16)
-            }
+            Capsule()
+                .fill(.white.opacity(0.12))
+                .frame(width: 1, height: 12)
 
+            Text(status)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(enterActive
+                    ? Color(red: 0.64, green: 0.86, blue: 0.72)
+                    : .white.opacity(stateManager.finishProgress != nil ? 0.85 : 0.40))
+                .contentTransition(.opacity)
+                .frame(width: 78, alignment: .leading)
+                .animation(.easeInOut(duration: 0.22), value: status)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Recording")
     }
 }
 
-struct PulseModifier: ViewModifier {
-    @State private var isPulsing = false
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(isPulsing ? 1.0 : 0.4)
-            .shadow(color: .red.opacity(isPulsing ? 0.6 : 0), radius: 4)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
-                    isPulsing = true
-                }
-            }
-            .onDisappear {
-                isPulsing = false
-            }
-    }
-}
-
-struct AudioVisualizerView: View {
-    let level: CGFloat
-    private let barCount = 8
+/// Meter samples only invalidate these five bars, not the clock or pill layout.
+@MainActor
+private struct RecordingMeter: View {
+    let stateManager: NotchStateManager
+    private let weights: [CGFloat] = [0.45, 0.75, 1, 0.75, 0.45]
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(0..<barCount, id: \.self) { index in
+        HStack(spacing: 3) {
+            ForEach(weights.indices, id: \.self) { index in
                 Capsule()
-                    .fill(.white.opacity(0.85))
-                    .frame(width: 3, height: barHeight(for: index))
+                    .fill(Color(red: 0.64, green: 0.86, blue: 0.72))
+                    .frame(width: 3, height: 3 + 15 * weights[index] * min(1, max(0, stateManager.audioLevel)))
             }
         }
-        .animation(.easeOut(duration: 0.1), value: level)
+        .animation(.easeOut(duration: 0.12), value: stateManager.audioLevel)
     }
+}
 
-    private func barHeight(for index: Int) -> CGFloat {
-        // For even bar counts, center between the two middle bars (e.g. 3.5 for 0...7).
-        let center = CGFloat(barCount - 1) / 2.0
-        let distance = abs(CGFloat(index) - center) / center
-        let base = 0.35 + (1.0 - distance) * 0.55
-        let responseLevel = CGFloat(pow(Double(level), 0.45))
-        let variation = sin(Double(index) * 1.8 + level * 12) * 0.45 + 0.85
-        let minHeight: CGFloat = 2.0
-        let maxHeight: CGFloat = 20.0
-        let dynamicRange = maxHeight - minHeight
-        let dynamicHeight = base * responseLevel * CGFloat(variation) * dynamicRange * 1.35
-        return minHeight + min(dynamicRange, max(0, dynamicHeight))
+@MainActor
+private struct RecordingClock: View {
+    let stateManager: NotchStateManager
+
+    var body: some View {
+        Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
+            .font(.system(size: 13, weight: .medium, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.9))
+            .monospacedDigit()
+            .fixedSize()
+            .frame(minWidth: 42)
     }
 }
 
@@ -267,7 +250,7 @@ struct ProcessingBorderLight: NSViewRepresentable {
             // Preserve phase when the pill resizes, rather than restarting the light.
             let animation = CABasicAnimation(keyPath: "lineDashPhase")
             animation.fromValue = 0
-            animation.toValue = -perimeter
+            animation.toValue = perimeter
             animation.duration = 2
             animation.repeatCount = .infinity
             animation.beginTime = 0.0001
