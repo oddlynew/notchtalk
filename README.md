@@ -168,6 +168,6 @@ Start and finish thresholds are separately adjustable from 200–2000 ms in 50 m
 
 ### Non-hold finish modes
 
-Settings → Behavior → **Non-hold mode** keeps the existing **Hold to end + Enter** behavior by default. Choose **Click to end, then toggle Enter** to click once to record and again to transcribe with Enter off. While transcription is pending, further recording-shortcut presses toggle Enter for that run only. Enabling Enter also enables pasting for that run. Every new recording starts with Enter off in this mode; hold-to-record keeps its existing release behavior. Setting changes apply to the next recording.
+Settings → Behavior → **Non-hold mode** keeps the existing **Hold to end + Enter** behavior by default. Choose **Click to end, then toggle Enter** to click once to record and press briefly again to transcribe with Enter off. Holding the finish press fills the progress bar and ends with Enter on, using the same configurable hold-to-send duration. While transcription is pending, further recording-shortcut presses toggle Enter for that run only. Enabling Enter also enables pasting for that run. Every new recording starts with Enter off in this mode; hold-to-record keeps its existing release behavior. Setting changes apply to the next recording.
 
 Recordings shorter than 500 ms never send Enter, including after shortcut toggles or retries. This uses the audio recorder's duration rather than the displayed timer; exactly 500 ms remains eligible.

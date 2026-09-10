@@ -44,12 +44,7 @@ final class AppController {
             guard let self else { return }
             if self.stateManager.state == .recording {
                 self.gestureStartedRecording = false
-                if self.stateManager.continuousFinishMode == .clickToToggleEnter
-                    && !self.stateManager.isHoldRecording {
-                    self.stateManager.stopRecording(submitAfterPaste: false)
-                } else {
-                    self.stateManager.beginFinishGesture()
-                }
+                self.stateManager.beginFinishGesture()
             } else {
                 self.stateManager.toggle()
                 self.gestureStartedRecording = self.stateManager.state == .recording
