@@ -78,8 +78,8 @@ final class SettingsManager {
         let defaults = UserDefaults.standard
         self.continuousFinishMode = defaults.string(forKey: "continuousFinishMode")
             .flatMap(ContinuousFinishMode.init(rawValue:)) ?? .clickToToggleEnter
-        self.startHoldDelay = min(2, max(0.2, defaults.object(forKey: "startHoldDelay") as? Double ?? 0.8))
-        self.finishHoldDelay = min(2, max(0.2, defaults.object(forKey: "finishHoldDelay") as? Double ?? 0.6))
+        self.startHoldDelay = min(2, max(0.2, defaults.object(forKey: "startHoldDelay") as? Double ?? 0.3))
+        self.finishHoldDelay = min(2, max(0.2, defaults.object(forKey: "finishHoldDelay") as? Double ?? 0.3))
         self.sendWithEnter = defaults.object(forKey: "sendWithEnter") as? Bool
             ?? (defaults.bool(forKey: "submitAfterContinuous") || defaults.bool(forKey: "submitAfterHold"))
         defaults.removeObject(forKey: "submitAfterContinuous")
