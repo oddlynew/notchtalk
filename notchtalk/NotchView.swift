@@ -31,7 +31,8 @@ struct NotchView: View {
 
             if isActive {
                 pillContent
-                    .frame(width: contentWidth, height: 20)
+                    .frame(width: contentWidth, height: 20, alignment: .center)
+                    .multilineTextAlignment(.center)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(
@@ -139,7 +140,7 @@ private struct CaptureContent: View {
                     ? Color(red: 0.64, green: 0.86, blue: 0.72)
                     : .white.opacity(stateManager.finishProgress != nil ? 0.85 : 0.40))
                 .contentTransition(.opacity)
-                .frame(width: 78, alignment: .leading)
+                .frame(width: 78, alignment: .center)
                 .animation(.easeInOut(duration: 0.22), value: status)
 
             if !isRecording && stateManager.processingControlsAvailable {
