@@ -118,7 +118,7 @@ struct NotchView: View {
                 if stateManager.pendingSubmit {
                     Text("Enter active")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color(red: 0.20, green: 0.88, blue: 0.38))
+                        .foregroundStyle(Color(red: 0.64, green: 0.86, blue: 0.72))
                         .fixedSize()
                         .help("Press the recording shortcut to turn off Enter for this transcription")
                         .transition(.opacity)
@@ -233,7 +233,7 @@ struct ProcessingBorderLight: View {
                 Capsule()
                     .inset(by: 1)
                     .stroke(
-                        Color(red: 0.20, green: 0.88, blue: 0.38).opacity(0.85),
+                        Color(red: 0.64, green: 0.86, blue: 0.72).opacity(0.85),
                         style: StrokeStyle(lineWidth: 1.5, lineCap: .round,
                                            dash: [highlight, perimeter - highlight],
                                            dashPhase: -phase * perimeter)
