@@ -19,7 +19,7 @@ struct NotchView: View {
         case .recording: return 184
         case .processing:
             return (stateManager.pendingSubmit ? 126 : 46)
-                + (stateManager.processingElapsed >= 10 ? 48 : 0)
+                + (stateManager.processingControlsAvailable ? 48 : 0)
         case .done: return 88
         case .error: return 180
         }
@@ -65,7 +65,7 @@ struct NotchView: View {
         .animation(.easeInOut(duration: 0.32), value: contentWidth)
         .animation(.easeInOut(duration: 0.22), value: stateManager.state)
         .animation(.easeInOut(duration: 0.32), value: stateManager.pendingSubmit)
-        .animation(.easeInOut(duration: 0.32), value: stateManager.processingElapsed >= 10)
+        .animation(.easeInOut(duration: 0.32), value: stateManager.processingControlsAvailable)
     }
 
     @ViewBuilder
@@ -75,38 +75,7 @@ struct NotchView: View {
             EmptyView()
 
         case .recording:
-            HStack(spacing: 12) {
-                // Recording indicator
-                Circle()
-                    .fill(NotchtalkStyle.recording)
-                    .frame(width: 8, height: 8)
-                    .modifier(PulseModifier())
-
-                // Timer
-                Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-
-                // Visualizer
-                ZStack {
-                    if let progress = stateManager.finishProgress {
-                        Label("Enter", systemImage: "arrow.turn.down.left")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white)
-                            .accessibilityLabel("Hold to send")
-                            .accessibilityValue("\(Int(progress * 100)) percent")
-                    } else if stateManager.isHoldRecording || stateManager.noSendForRecording {
-                        Text(SettingsManager.shared.sendWithEnter && !stateManager.noSendForRecording ? "Release to send" : "Release to transcribe")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.85))
-                    } else {
-                        AudioVisualizerView(level: stateManager.audioLevel)
-                    }
-                }
-                .frame(width: 110, height: 16)
-            }
+            RecordingContent(stateManager: stateManager)
 
         case .processing:
             HStack(spacing: 10) {
@@ -124,7 +93,7 @@ struct NotchView: View {
                         .transition(.opacity)
                 }
 
-                if stateManager.processingElapsed >= 10 {
+                if stateManager.processingControlsAvailable {
                     Button {
                         stateManager.retryProcessing()
                     } label: {
@@ -171,6 +140,47 @@ struct NotchView: View {
 }
 
 // MARK: - Supporting Views
+
+@MainActor
+private struct RecordingContent: View {
+    let stateManager: NotchStateManager
+
+    var body: some View {
+            HStack(spacing: 12) {
+                // Recording indicator
+                Circle()
+                    .fill(NotchtalkStyle.recording)
+                    .frame(width: 8, height: 8)
+                    .modifier(PulseModifier())
+
+                // Timer
+                Text(Duration.seconds(stateManager.recordingDuration), format: .time(pattern: .minuteSecond))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+
+                // Visualizer
+                ZStack {
+                    if let progress = stateManager.finishProgress {
+                        Label("Enter", systemImage: "arrow.turn.down.left")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white)
+                            .accessibilityLabel("Hold to send")
+                            .accessibilityValue("\(Int(progress * 100)) percent")
+                    } else if stateManager.isHoldRecording || stateManager.noSendForRecording {
+                        Text(SettingsManager.shared.sendWithEnter && !stateManager.noSendForRecording ? "Release to send" : "Release to transcribe")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.85))
+                    } else {
+                        AudioVisualizerView(level: stateManager.audioLevel)
+                    }
+                }
+                .frame(width: 110, height: 16)
+            }
+
+    }
+}
 
 struct PulseModifier: ViewModifier {
     @State private var isPulsing = false
@@ -220,25 +230,57 @@ struct AudioVisualizerView: View {
     }
 }
 
-/// A single highlight follows the capsule perimeter only while processing.
-/// Keep this activity cue moving even with Reduce Motion: it replaces the spinner.
-struct ProcessingBorderLight: View {
-    var body: some View {
-        GeometryReader { geometry in
-            let radius = max(0, (geometry.size.height - 2) / 2)
-            let perimeter = 2 * max(0, geometry.size.width - geometry.size.height) + 2 * .pi * radius
-            let highlight = perimeter * 0.20
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-                let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2) / 2
-                Capsule()
-                    .inset(by: 1)
-                    .stroke(
-                        Color(red: 0.64, green: 0.86, blue: 0.72).opacity(0.85),
-                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round,
-                                           dash: [highlight, perimeter - highlight],
-                                           dashPhase: -phase * perimeter)
-                    )
-                    .shadow(color: NotchtalkStyle.recording.opacity(0.45), radius: 3)
+/// Core Animation moves the highlight without a SwiftUI timer or per-frame layout.
+struct ProcessingBorderLight: NSViewRepresentable {
+    func makeNSView(context: Context) -> BorderLightView { BorderLightView() }
+    func updateNSView(_ nsView: BorderLightView, context: Context) {}
+
+    final class BorderLightView: NSView {
+        private let highlight = CAShapeLayer()
+        private var previousSize: CGSize = .zero
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            wantsLayer = true
+            highlight.fillColor = nil
+            highlight.strokeColor = NSColor(srgbRed: 0.64, green: 0.86, blue: 0.72, alpha: 0.85).cgColor
+            highlight.lineWidth = 1.5
+            highlight.lineCap = .round
+            layer?.addSublayer(highlight)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func layout() {
+            super.layout()
+            guard bounds.size != previousSize, bounds.height > 2 else { return }
+            previousSize = bounds.size
+            let rect = bounds.insetBy(dx: 1, dy: 1)
+            let radius = rect.height / 2
+            let perimeter = 2 * max(0, rect.width - rect.height) + 2 * .pi * radius
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            highlight.frame = bounds
+            highlight.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            highlight.lineDashPattern = [NSNumber(value: perimeter * 0.2), NSNumber(value: perimeter * 0.8)]
+            CATransaction.commit()
+            // Preserve phase when the pill resizes, rather than restarting the light.
+            let animation = CABasicAnimation(keyPath: "lineDashPhase")
+            animation.fromValue = 0
+            animation.toValue = -perimeter
+            animation.duration = 2
+            animation.repeatCount = .infinity
+            animation.beginTime = 0.0001
+            highlight.add(animation, forKey: "processing")
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil {
+                highlight.removeAllAnimations()
+                previousSize = .zero
+            } else {
+                needsLayout = true
             }
         }
     }

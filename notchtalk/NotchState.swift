@@ -38,13 +38,13 @@ final class NotchStateManager {
     var retryAttempt: Int?
     var totalRetries = 0
     var lastOutputDisposition: OutputDisposition?
-    var processingElapsed: TimeInterval = 0
+    private(set) var processingControlsAvailable = false
 
     var processingStatusText: String {
         if let retryAttempt, totalRetries > 0 {
             return "Retrying (\(retryAttempt)/\(totalRetries))"
         }
-        if processingElapsed >= 10 {
+        if processingControlsAvailable {
             return "Still transcribing"
         }
         return "Transcribing"
@@ -196,7 +196,7 @@ final class NotchStateManager {
         state = .processing
         retryAttempt = nil
         totalRetries = 0
-        processingElapsed = 0
+        processingControlsAvailable = false
         SoundManager.shared.playStopSound()
 
         let provider = SettingsManager.shared.transcriptionProvider
@@ -343,7 +343,7 @@ final class NotchStateManager {
 
         retryAttempt = nil
         totalRetries = 0
-        processingElapsed = 0
+        processingControlsAvailable = false
         diagnosticsStore.log("User requested retry; cancelling in-flight request", level: .warning, for: diagnosticsID)
         let provider = SettingsManager.shared.transcriptionProvider
         let speakerRecognitionEnabled = provider == .elevenLabs
@@ -481,7 +481,7 @@ final class NotchStateManager {
         recordingDuration = 0
         retryAttempt = nil
         totalRetries = 0
-        processingElapsed = 0
+        processingControlsAvailable = false
         currentRecordingURL = nil
         currentRecordingDuration = nil
         lastOutputDisposition = nil
@@ -545,7 +545,7 @@ final class NotchStateManager {
         state = .processing
         retryAttempt = nil
         totalRetries = 0
-        processingElapsed = 0
+        processingControlsAvailable = false
         currentRecordingURL = retainedAudioURL
         currentRecordingDuration = nil
         activeDiagnosticsID = diagnosticsID
@@ -664,19 +664,21 @@ final class NotchStateManager {
     private func startProcessingTimer() {
         processingTimerTask?.cancel()
         processingTimerTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let start = Date()
-            while !Task.isCancelled {
-                guard case .processing = self.state else { break }
-                self.processingElapsed = Date().timeIntervalSince(start)
-                try? await Task.sleep(for: .milliseconds(250))
+            // The UI only needs to know when retry/cancel controls should appear.
+            // Do not invalidate observable state continuously during a network request.
+            do {
+                try await Task.sleep(for: .seconds(10))
+            } catch {
+                return
             }
+            guard let self, self.state == .processing else { return }
+            self.processingControlsAvailable = true
         }
     }
 
     private func stopProcessingTimer() {
         processingTimerTask?.cancel()
         processingTimerTask = nil
-        processingElapsed = 0
+        processingControlsAvailable = false
     }
 }

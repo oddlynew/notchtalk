@@ -26,6 +26,8 @@ while IFS= read -r source; do
 done < <(find "$ROOT_DIR/notchtalk" -name '*.swift' | sort)
 
 swiftc \
+  -O \
+  -whole-module-optimization \
   -target "$(uname -m)-apple-macosx$MIN_SYSTEM_VERSION" \
   -sdk "$SDK_PATH" \
   -module-cache-path "$MODULE_CACHE_DIR" \
