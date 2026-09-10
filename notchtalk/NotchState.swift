@@ -27,6 +27,8 @@ final class NotchStateManager {
     var latestTranscript: String?
     var isHoldRecording = false
     var noSendForRecording = false
+    private(set) var pendingSubmit = false
+    private var pasteForCurrentTranscription = false
     var finishProgress: Double?
     private var finishTask: Task<Void, Never>?
     private var finishDeadline: TimeInterval?
@@ -72,7 +74,7 @@ final class NotchStateManager {
         case .recording:
             stopRecording(submitAfterPaste: SettingsManager.shared.sendWithEnter, trigger: trigger)
         case .processing:
-            break
+            pendingSubmit = false
         case .done, .error:
             processingTask?.cancel()
             reset()
@@ -81,6 +83,8 @@ final class NotchStateManager {
     }
 
     func startRecording() {
+        pendingSubmit = false
+        pasteForCurrentTranscription = false
         isHoldRecording = false
         noSendForRecording = false
         processingTask?.cancel()
@@ -187,6 +191,8 @@ final class NotchStateManager {
         currentRecordingURL = recordingURL
         let capturedRecordingDuration = recordingDuration
         currentRecordingDuration = capturedRecordingDuration
+        pendingSubmit = submitAfterPaste
+        pasteForCurrentTranscription = SettingsManager.shared.autoPasteEnabled || submitAfterPaste
         state = .processing
         retryAttempt = nil
         totalRetries = 0
@@ -252,9 +258,9 @@ final class NotchStateManager {
                 )
 
                 // Copy to clipboard and optionally paste
-                if SettingsManager.shared.autoPasteEnabled || submitAfterPaste {
+                if pasteForCurrentTranscription {
                     lastOutputDisposition = .pastedToCursor
-                    ClipboardService.pastePreservingClipboard(transcription, submit: submitAfterPaste)
+                    ClipboardService.pastePreservingClipboard(transcription, submit: pendingSubmit)
                 } else {
                     lastOutputDisposition = .copiedToClipboard
                     ClipboardService.copy(transcription)
@@ -381,9 +387,9 @@ final class NotchStateManager {
                     promptProvided: prompt != nil
                 )
 
-                if SettingsManager.shared.autoPasteEnabled {
+                if pasteForCurrentTranscription {
                     lastOutputDisposition = .pastedToCursor
-                    ClipboardService.pastePreservingClipboard(transcription)
+                    ClipboardService.pastePreservingClipboard(transcription, submit: pendingSubmit)
                 } else {
                     lastOutputDisposition = .copiedToClipboard
                     ClipboardService.copy(transcription)
@@ -461,6 +467,8 @@ final class NotchStateManager {
     }
 
     func reset() {
+        pendingSubmit = false
+        pasteForCurrentTranscription = false
         isHoldRecording = false
         noSendForRecording = false
         finishTask?.cancel()
@@ -494,6 +502,8 @@ final class NotchStateManager {
         }
 
         processingTask?.cancel()
+        pendingSubmit = false
+        pasteForCurrentTranscription = SettingsManager.shared.autoPasteEnabled
         latestTranscript = nil
         guard let retainedAudioURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID) else {
             state = .error("No audio")
