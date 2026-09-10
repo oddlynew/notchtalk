@@ -13,13 +13,25 @@ struct NotchView: View {
         stateManager.state != .idle
     }
 
+    private var contentWidth: CGFloat {
+        switch stateManager.state {
+        case .idle: return 184
+        case .recording: return 184
+        case .processing:
+            return (stateManager.pendingSubmit ? 126 : 46)
+                + (stateManager.processingElapsed >= 10 ? 48 : 0)
+        case .done: return 88
+        case .error: return 180
+        }
+    }
+
     var body: some View {
         VStack {
             Spacer()
 
             if isActive {
                 pillContent
-                    .frame(height: 20)
+                    .frame(width: contentWidth, height: 20)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
                     .background(
@@ -50,9 +62,10 @@ struct NotchView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .animation(.smooth(duration: 0.25), value: isActive)
-        .animation(.smooth(duration: 0.25), value: stateManager.state)
-        .animation(.smooth(duration: 0.25), value: stateManager.pendingSubmit)
-        .animation(.smooth(duration: 0.25), value: stateManager.processingElapsed >= 10)
+        .animation(.easeInOut(duration: 0.32), value: contentWidth)
+        .animation(.easeInOut(duration: 0.22), value: stateManager.state)
+        .animation(.easeInOut(duration: 0.32), value: stateManager.pendingSubmit)
+        .animation(.easeInOut(duration: 0.32), value: stateManager.processingElapsed >= 10)
     }
 
     @ViewBuilder
