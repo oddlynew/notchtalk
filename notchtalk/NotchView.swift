@@ -208,22 +208,21 @@ struct AudioVisualizerView: View {
 }
 
 /// A single highlight follows the capsule perimeter only while processing.
+/// Keep this activity cue moving even with Reduce Motion: it replaces the spinner.
 struct ProcessingBorderLight: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
         GeometryReader { geometry in
             let radius = max(0, (geometry.size.height - 2) / 2)
             let perimeter = 2 * max(0, geometry.size.width - geometry.size.height) + 2 * .pi * radius
             let highlight = perimeter * 0.20
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { context in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
                 let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 2) / 2
                 Capsule()
                     .inset(by: 1)
                     .stroke(
                         Color(red: 0.64, green: 0.86, blue: 0.72).opacity(0.85),
                         style: StrokeStyle(lineWidth: 1.5, lineCap: .round,
-                                           dash: reduceMotion ? [] : [highlight, perimeter - highlight],
+                                           dash: [highlight, perimeter - highlight],
                                            dashPhase: -phase * perimeter)
                     )
                     .shadow(color: NotchtalkStyle.recording.opacity(0.45), radius: 3)
