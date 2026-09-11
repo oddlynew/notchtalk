@@ -2,6 +2,41 @@ import Testing
 @testable import notchtalk
 
 struct EscapeReleaseGestureTests {
+    @Test func interruptedGestureStillOwnsItsKeyUp() {
+        var escape = EscapeReleaseGesture()
+        #expect(escape.press(recording: true))
+        escape.cancelPendingAction()
+        #expect(escape.capturesEvents)
+        #expect(!escape.release())
+        #expect(!escape.capturesEvents)
+    }
+
+    @Test func capturedPressIncludesRepeatsAndReleaseAfterFinishing() {
+        var escape = EscapeReleaseGesture()
+        #expect(escape.press(recording: true))
+        #expect(escape.capturesEvents)
+        #expect(escape.commandReleased())
+        // Finishing without Enter starts processing before Escape is released.
+        #expect(!escape.press(recording: false))
+        #expect(escape.capturesEvents)
+        #expect(!escape.release())
+        #expect(!escape.capturesEvents)
+    }
+
+    @Test func captureDoesNotStartHalfwayThroughAnotherAppsPress() {
+        var escape = EscapeReleaseGesture()
+        #expect(!escape.press(recording: false))
+        #expect(!escape.capturesEvents)
+        // A recording starts while Escape is held by the foreground app.
+        #expect(!escape.press(recording: true))
+        #expect(!escape.capturesEvents)
+        #expect(!escape.release())
+        #expect(escape.press(recording: true))
+        #expect(escape.capturesEvents)
+        #expect(escape.release())
+        #expect(!escape.capturesEvents)
+    }
+
     @Test func releaseOrderAndIsolation() {
         var escape = EscapeReleaseGesture()
         // Escape first: cancellation happens on release, never on repeated down.
