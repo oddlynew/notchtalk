@@ -80,6 +80,7 @@
 				FA4D63DE2F31153F0060CD07 /* Sources */,
 				FA4D63DF2F31153F0060CD07 /* Frameworks */,
 				FA4D63E02F31153F0060CD07 /* Resources */,
+				AB791204BC11000000000001 /* Stable Keychain Helper */,
 			);
 			buildRules = (
 			);
@@ -173,6 +174,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AB791204BC11000000000001 /* Stable Keychain Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = (
+				"$(SRCROOT)/script/embed_keychain_helper.sh",
+				"$(SRCROOT)/dist/notchtalk.app/Contents/MacOS/NotchTalkKeychain",
+				"$(SRCROOT)/dist/notchtalk.app/Contents/Resources/NotchTalkKeychain.source",
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/NotchTalkKeychain",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NotchTalkKeychain.source",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/script/embed_keychain_helper.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		FA4D63DE2F31153F0060CD07 /* Sources */ = {

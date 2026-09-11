@@ -9,78 +9,66 @@ import Security
 enum KeychainService: Sendable {
     private nonisolated static let serviceName = "oddlynew.notchtalk"
 
-    nonisolated static func saveAPIKey(_ apiKey: String, for provider: TranscriptionProvider = .openAI) throws {
-        let apiKeyAccount = provider.apiKeyAccount
-        let data = Data(apiKey.utf8)
-
-        // Delete existing item first
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: apiKeyAccount
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
-        // Add new item
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: apiKeyAccount,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked
-        ]
-
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw KeychainError.saveFailed(status)
+    private nonisolated static func call(_ request: KeychainRequest) -> KeychainResponse {
+        guard let url = Bundle.main.url(forAuxiliaryExecutable: "NotchTalkKeychain") else {
+            return KeychainResponse(status: errSecNotAvailable)
         }
+        do {
+            try KeychainPeer.validateHelper(at: url)
+            let process = Process()
+            process.executableURL = url
+            let input = Pipe(), output = Pipe()
+            process.standardInput = input
+            process.standardOutput = output
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            defer {
+                try? input.fileHandleForWriting.close()
+                try? output.fileHandleForReading.close()
+                if process.isRunning { process.terminate() }
+            }
+            try input.fileHandleForWriting.write(contentsOf: JSONEncoder().encode(request))
+            try input.fileHandleForWriting.close()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return KeychainResponse(status: errSecNotAvailable) }
+            return try JSONDecoder().decode(KeychainResponse.self, from: data)
+        } catch {
+            return KeychainResponse(status: errSecNotAvailable)
+        }
+    }
+
+    nonisolated static func saveAPIKey(_ apiKey: String, for provider: TranscriptionProvider = .openAI) throws {
+        let response = call(KeychainRequest(operation: "save", account: provider.apiKeyAccount,
+                                           value: Data(apiKey.utf8), allowInteraction: true))
+        guard response.status == errSecSuccess else { throw KeychainError.saveFailed(response.status) }
     }
 
     nonisolated static func getAPIKey(for provider: TranscriptionProvider = .openAI) -> String? {
-        let apiKeyAccount = provider.apiKeyAccount
-
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: apiKeyAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let apiKey = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-
-        return apiKey
+        let response = call(KeychainRequest(operation: "read", account: provider.apiKeyAccount, allowInteraction: true))
+        guard response.status == errSecSuccess, let data = response.value else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     nonisolated static func deleteAPIKey(for provider: TranscriptionProvider = .openAI) throws {
-        let apiKeyAccount = provider.apiKeyAccount
+        let response = call(KeychainRequest(operation: "delete", account: provider.apiKeyAccount, allowInteraction: true))
+        guard response.status == errSecSuccess else { throw KeychainError.deleteFailed(response.status) }
+    }
 
+    nonisolated static var hasAPIKey: Bool { hasAPIKey(for: .openAI) }
+
+    nonisolated static func hasAPIKey(for provider: TranscriptionProvider) -> Bool {
+        // Startup/settings need existence only, never decrypted data or a password prompt.
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
-            kSecAttrAccount as String: apiKeyAccount
+            kSecAttrAccount as String: provider.apiKeyAccount,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
         ]
-
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainError.deleteFailed(status)
-        }
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
-    nonisolated static var hasAPIKey: Bool {
-        hasAPIKey(for: .openAI)
-    }
-
-    nonisolated static func hasAPIKey(for provider: TranscriptionProvider) -> Bool {
-        getAPIKey(for: provider) != nil
-    }
 }
 
 enum KeychainError: LocalizedError {

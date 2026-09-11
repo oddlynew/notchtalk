@@ -80,15 +80,19 @@ cat >"$INFO_PLIST" <<PLIST
 </plist>
 PLIST
 
+"$ROOT_DIR/script/build_keychain_helper.sh" "$APP_MACOS"
+
 xattr -cr "$APP_BUNDLE"
 codesign \
   --force \
-  --deep \
+  --options runtime \
   --sign "$SIGNING_IDENTITY" \
   --timestamp=none \
   "$APP_BUNDLE" >/dev/null
 
 codesign --verify --strict "$APP_BUNDLE"
+
+if [[ "$MODE" == "--build-only" ]]; then exit 0; fi
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 rm -rf "$INSTALLED_APP_BUNDLE"
