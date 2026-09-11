@@ -4,6 +4,13 @@ set -euo pipefail
 MODE="${1:-run}"
 APP_NAME="notchtalk"
 BUNDLE_ID="oddlynew.notchtalk"
+SIGNING_IDENTITY="${NOTCHTALK_SIGNING_IDENTITY:-NotchTalk Local Development}"
+# A stable certificate binds Keychain access to the signer across rebuilds.
+# Never silently fall back to ad-hoc signing when the identity is unavailable.
+if ! security find-identity -p codesigning | grep -Fq "$SIGNING_IDENTITY"; then
+  echo "Missing code-signing identity: $SIGNING_IDENTITY. See README: Local signing." >&2
+  exit 1
+fi
 MIN_SYSTEM_VERSION="14.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -77,20 +84,17 @@ xattr -cr "$APP_BUNDLE"
 codesign \
   --force \
   --deep \
-  --sign - \
-  --requirements "=designated => identifier \"$BUNDLE_ID\"" \
+  --sign "$SIGNING_IDENTITY" \
+  --timestamp=none \
   "$APP_BUNDLE" >/dev/null
+
+codesign --verify --strict "$APP_BUNDLE"
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 rm -rf "$INSTALLED_APP_BUNDLE"
 cp -R "$APP_BUNDLE" "$INSTALLED_APP_BUNDLE"
 xattr -cr "$INSTALLED_APP_BUNDLE"
-codesign \
-  --force \
-  --deep \
-  --sign - \
-  --requirements "=designated => identifier \"$BUNDLE_ID\"" \
-  "$INSTALLED_APP_BUNDLE" >/dev/null
+codesign --verify --strict "$INSTALLED_APP_BUNDLE"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
   -f "$INSTALLED_APP_BUNDLE" >/dev/null 2>&1 || true
 
