@@ -20,7 +20,7 @@ struct NotchView: View {
         case .processing:
             return 78
                 + (stateManager.processingControlsAvailable ? 48 : 0)
-        case .done: return 88
+        case .done: return 20
         case .error: return 180
         }
     }
@@ -78,14 +78,7 @@ struct NotchView: View {
             CaptureContent(stateManager: stateManager)
 
         case .done:
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(NotchtalkStyle.recording)
-
-                Text(stateManager.lastOutputDisposition == .pastedToCursor ? "Pasted!" : "Copied!")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white)
-            }
+            CompletionMark(pasted: stateManager.lastOutputDisposition == .pastedToCursor)
 
         case .error(let message):
             HStack(spacing: 8) {
@@ -101,6 +94,28 @@ struct NotchView: View {
 }
 
 // MARK: - Supporting Views
+
+/// One gentle confirmation, with no looping animation or additional timer.
+private struct CompletionMark: View {
+    let pasted: Bool
+    @State private var appeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Image(systemName: pasted ? "checkmark" : "doc.on.clipboard")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Color(red: 0.64, green: 0.86, blue: 0.72))
+            .frame(width: 20, height: 20)
+            .scaleEffect(appeared || reduceMotion ? 1 : 0.75)
+            .opacity(appeared ? 1 : 0)
+            .accessibilityLabel(pasted ? "Text pasted" : "Text copied to clipboard")
+            .onAppear {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.3, bounce: 0.12)) {
+                    appeared = true
+                }
+            }
+    }
+}
 
 @MainActor
 private struct CaptureContent: View {
