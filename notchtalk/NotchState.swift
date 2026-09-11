@@ -286,7 +286,7 @@ final class NotchStateManager {
                 activeDiagnosticsID = nil
                 stopProcessingTimer()
 
-                try? await Task.sleep(for: .seconds(0.85))
+                try? await Task.sleep(for: .seconds(0.8))
 
                 guard !Task.isCancelled else { return }
                 reset()
@@ -414,7 +414,7 @@ final class NotchStateManager {
                 activeDiagnosticsID = nil
                 stopProcessingTimer()
 
-                try? await Task.sleep(for: .seconds(0.85))
+                try? await Task.sleep(for: .seconds(0.8))
 
                 guard !Task.isCancelled else { return }
                 reset()
@@ -619,7 +619,7 @@ final class NotchStateManager {
                 activeDiagnosticsID = nil
                 stopProcessingTimer()
 
-                try? await Task.sleep(for: .seconds(0.85))
+                try? await Task.sleep(for: .seconds(0.8))
 
                 guard !Task.isCancelled else { return }
                 reset()
