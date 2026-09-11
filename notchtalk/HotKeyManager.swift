@@ -46,7 +46,7 @@ final class HotKeyManager: @unchecked Sendable {
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,
+            options: .defaultTap,
             eventsOfInterest: eventMask,
             callback: { proxy, type, event, refcon in
                 guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
@@ -87,7 +87,7 @@ final class HotKeyManager: @unchecked Sendable {
             lock.lock()
             let wasHolding = gesture.down
             gesture.cancel()
-            escapeGesture.reset()
+            escapeGesture.cancelPendingAction()
             holdTimer?.cancel()
             lock.unlock()
             if wasHolding { DispatchQueue.main.async { [weak self] in self?.onCancel?() } }
@@ -101,22 +101,25 @@ final class HotKeyManager: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        if keyCode == 53 {
+        if keyCode == 53 && (type == .keyDown || type == .keyUp) {
+            var captured = escapeGesture.capturesEvents
             if type == .keyDown {
                 let recording = MainActor.assumeIsolated { NotchStateManager.shared.state == .recording }
                 if escapeGesture.press(recording: recording) {
                     MainActor.assumeIsolated { onEscapeHeld?() }
                 }
+                captured = escapeGesture.capturesEvents
             } else if type == .keyUp && escapeGesture.release() {
                 lock.lock()
                 gesture.cancel()
                 holdTimer?.cancel()
                 lock.unlock()
-                MainActor.assumeIsolated {
-                    if NotchStateManager.shared.state == .recording { onCancel?() }
+                // Audio retention can touch disk. Let the active event tap return first.
+                DispatchQueue.main.async { [weak self] in
+                    if NotchStateManager.shared.state == .recording { self?.onCancel?() }
                 }
             }
-            return Unmanaged.passUnretained(event)
+            return captured ? nil : Unmanaged.passUnretained(event)
         }
         if type == .keyDown || (type == .flagsChanged && keyCode != 54) {
             lock.lock()
