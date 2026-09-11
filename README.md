@@ -171,3 +171,11 @@ Start and finish thresholds are separately adjustable from 200–2000 ms in 50 m
 Settings → Behavior → **Non-hold mode** defaults to **Click to end, then toggle Enter** when no preference is saved; existing selections are preserved. This mode lets you click once to record and press briefly again to transcribe with Enter off. Holding the finish press fills the progress bar and ends with Enter on, using the same configurable hold-to-send duration. While transcription is pending, further recording-shortcut presses toggle Enter for that run only. Enabling Enter also enables pasting for that run. Every new recording starts with Enter off in this mode; hold-to-record keeps its existing release behavior. Setting changes apply to the next recording.
 
 Recordings shorter than 500 ms never send Enter, including after shortcut toggles or retries. This uses the audio recorder's duration rather than the displayed timer; exactly 500 ms remains eligible.
+
+### Local signing
+
+Local builds use the persistent **NotchTalk Local Development** code-signing certificate in your login keychain. Create it once using Keychain Access → Certificate Assistant → Create a Certificate (Self Signed Root, Code Signing), or select an existing signing identity with `NOTCHTALK_SIGNING_IDENTITY`. Retain that same certificate and private key across updates. Never commit or share the private key.
+
+The build fails before installation if the identity is missing. It signs once, preserves that signature when copying the app, and verifies the installed bundle. It does not use an identifier-only custom requirement or silently fall back to ad-hoc signing. Self-signed local builds are not Developer ID distribution or notarization.
+
+Switching from an old ad-hoc build may require one final Keychain approval (choose Always Allow for NotchTalk). Existing keychain items are not deleted or rewritten by installation. macOS microphone/accessibility permissions may also need approval after the identity changes.
