@@ -118,13 +118,18 @@ actor ElevenLabsTranscriptionService {
                 }
 
                 let transcriptionResponse = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
+                await onLog?("ElevenLabs HTTP \(httpResponse.statusCode); text_characters=\(transcriptionResponse.text.count); word_count=\(transcriptionResponse.words?.count ?? 0)", .info)
+                let transcript = Self.formattedTranscript(from: transcriptionResponse, diarize: diarize)
+                guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw TranscriptionError.emptyTranscript
+                }
                 if diarize {
                     let speakerIDs = Set(transcriptionResponse.words?.compactMap(\.speakerID) ?? []).sorted()
                     if !speakerIDs.isEmpty {
                         await onLog?("ElevenLabs returned speaker IDs: \(speakerIDs.joined(separator: ", "))", .info)
                     }
                 }
-                return Self.formattedTranscript(from: transcriptionResponse, diarize: diarize)
+                return transcript
             } catch {
                 if Task.isCancelled {
                     throw error

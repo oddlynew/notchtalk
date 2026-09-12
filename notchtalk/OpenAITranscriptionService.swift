@@ -926,6 +926,9 @@ actor OpenAITranscriptionService {
         }
 
         let result = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
+        guard !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TranscriptionError.emptyTranscript
+        }
         return result.text
     }
 
@@ -1131,6 +1134,7 @@ extension FileHandle {
 enum TranscriptionError: LocalizedError {
     case noAPIKey
     case invalidResponse
+    case emptyTranscript
     case timeout
     case httpError(Int)
     case apiError(String)
@@ -1141,12 +1145,24 @@ enum TranscriptionError: LocalizedError {
             return "No API key configured"
         case .invalidResponse:
             return "Invalid response from server"
+        case .emptyTranscript:
+            return "No speech recognized. Check the microphone and input volume."
         case .timeout:
             return "Transcription timed out"
         case .httpError(let code):
             return "HTTP error: \(code)"
         case .apiError(let message):
             return message
+        }
+    }
+
+    var statusMessage: String {
+        switch self {
+        case .noAPIKey: return "No API key"
+        case .emptyTranscript: return "No speech detected"
+        case .timeout: return "Timed out"
+        case .apiError(let message): return String(message.prefix(20))
+        case .invalidResponse, .httpError: return "API error"
         }
     }
 }
