@@ -151,6 +151,8 @@ Issues and pull requests are welcome, especially around:
 
 The menu bar panel offers **Copy latest** for the most recent successful attempt in the current app run. Starting another attempt immediately disables it; failure, cancellation, or an empty result never falls back to an older transcript. History remains available separately.
 
+A provider response with no text is shown as **No speech detected** and recorded as a failed attempt, with the audio retained for retry. It never pastes, clears the clipboard, or sends Enter. Check the selected macOS input device and its input volume when this happens repeatedly.
+
 Press right Command to start recording immediately. Release within 300 ms (the default) to keep recording; press again to finish. Hold beyond that threshold and release to finish instead. Escape cancels. Combining the key with other keys cancels the shortcut gesture.
 
 ### Sending with Enter

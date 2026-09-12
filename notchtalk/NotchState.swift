@@ -293,26 +293,9 @@ final class NotchStateManager {
             } catch {
                 guard !Task.isCancelled else { return }
 
-                let errorMessage: String
-                if let transcriptionError = error as? TranscriptionError {
-                    switch transcriptionError {
-                    case .noAPIKey:
-                        errorMessage = "No API key"
-                    case .timeout:
-                        errorMessage = "Timed out"
-                    case .apiError(let message):
-                        // Truncate long error messages
-                        errorMessage = String(message.prefix(20))
-                    default:
-                        errorMessage = "API error"
-                    }
-                } else {
-                    errorMessage = "Failed"
-                }
-
                 diagnosticsStore.markFailed(for: diagnosticsID, message: error.localizedDescription)
 
-                state = .error(errorMessage)
+                state = .error((error as? TranscriptionError)?.statusMessage ?? "Failed")
                 SoundManager.shared.playErrorSound()
                 stopProcessingTimer()
 
@@ -422,7 +405,7 @@ final class NotchStateManager {
                 guard !Task.isCancelled else { return }
 
                 diagnosticsStore.markFailed(for: diagnosticsID, message: error.localizedDescription)
-                state = .error("Failed")
+                state = .error((error as? TranscriptionError)?.statusMessage ?? "Failed")
                 SoundManager.shared.playErrorSound()
                 stopProcessingTimer()
 
@@ -627,7 +610,7 @@ final class NotchStateManager {
                 guard !Task.isCancelled else { return }
 
                 diagnosticsStore.markFailed(for: diagnosticsID, message: error.localizedDescription)
-                state = .error("Failed")
+                state = .error((error as? TranscriptionError)?.statusMessage ?? "Failed")
                 SoundManager.shared.playErrorSound()
                 activeDiagnosticsID = nil
                 stopProcessingTimer()
