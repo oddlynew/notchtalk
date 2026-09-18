@@ -8,6 +8,7 @@ enum NotchtalkStyle {
             : NSColor(srgbRed: 0.29, green: 0.40, blue: 0.36, alpha: 1)
     })
     static let recording = Color(red: 0.55, green: 0.66, blue: 0.60)
+    static let paused = Color(red: 0.95, green: 0.78, blue: 0.42)
 }
 
 struct QuietButtonStyle: ButtonStyle {
