@@ -31,6 +31,7 @@ final class NotchStateManager {
     private(set) var continuousFinishMode: ContinuousFinishMode = .holdToSend
     private var canToggleProcessingEnter = false
     private var pasteForCurrentTranscription = false
+    private(set) var isPaused = false
     var finishProgress: Double?
     private var finishTask: Task<Void, Never>?
     private var finishDeadline: TimeInterval?
@@ -99,6 +100,7 @@ final class NotchStateManager {
         pasteForCurrentTranscription = false
         isHoldRecording = false
         noSendForRecording = false
+        isPaused = false
         processingTask?.cancel()
         latestTranscript = nil
         let provider = SettingsManager.shared.transcriptionProvider
@@ -129,6 +131,8 @@ final class NotchStateManager {
             do {
                 guard !Task.isCancelled else { return }
                 let recordingURL = try await audioRecorder.startRecording()
+                // Pausing can win the race against the recorder coming up.
+                if isPaused { audioRecorder.pause() }
                 currentRecordingURL = recordingURL
                 activeDiagnosticsID = diagnosticsStore.startRecording(
                     audioURL: recordingURL,
@@ -137,9 +141,9 @@ final class NotchStateManager {
                 )
 
                 // Update duration timer
-                while !Task.isCancelled && audioRecorder.isRecording {
+                while !Task.isCancelled && (audioRecorder.isRecording || isPaused) {
                     try? await Task.sleep(for: .milliseconds(100))
-                    recordingDuration += 0.1
+                    if !isPaused { recordingDuration += 0.1 }
                 }
             } catch {
                 await MainActor.run {
@@ -148,6 +152,23 @@ final class NotchStateManager {
                     SoundManager.shared.playErrorSound()
                 }
             }
+        }
+    }
+
+    /// Pausing keeps the recording open; AVAudioRecorder resumes into the same file,
+    /// so the paused time never reaches the audio or the transcript.
+    func togglePause() {
+        guard state == .recording else { return }
+        if isPaused {
+            guard audioRecorder.resume() else { return }
+            isPaused = false
+        } else {
+            audioRecorder.pause()
+            isPaused = true
+            audioLevel = 0
+        }
+        if let activeDiagnosticsID {
+            diagnosticsStore.log(isPaused ? "Recording paused" : "Recording resumed", for: activeDiagnosticsID)
         }
     }
 
@@ -194,6 +215,7 @@ final class NotchStateManager {
         recordingTask = nil
 
         let capturedRecordingDuration = audioRecorder.recordedDuration
+        isPaused = false
         guard let recordingURL = audioRecorder.stopRecording() else {
             AudioDuckingService.shared.endDucking()
             state = .error("No recording")
@@ -470,6 +492,7 @@ final class NotchStateManager {
         pasteForCurrentTranscription = false
         isHoldRecording = false
         noSendForRecording = false
+        isPaused = false
         finishTask?.cancel()
         finishTask = nil
         finishProgress = nil
