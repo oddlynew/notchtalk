@@ -16,7 +16,7 @@ struct NotchView: View {
     private var contentWidth: CGFloat {
         switch stateManager.state {
         case .idle: return 184
-        case .recording: return 202
+        case .recording: return 228
         case .processing:
             return 78
                 + (stateManager.processingControlsAvailable ? 48 : 0)
@@ -131,16 +131,32 @@ private struct CaptureContent: View {
 
     private var status: String {
         if stateManager.finishProgress != nil { return "Hold to send" }
+        if stateManager.isPaused { return "Paused" }
         return enterActive ? "Enter active" : "Enter off"
+    }
+
+    private var statusTint: Color {
+        if stateManager.isPaused && stateManager.finishProgress == nil { return NotchtalkStyle.paused }
+        return enterActive
+            ? Color(red: 0.64, green: 0.86, blue: 0.72)
+            : .white.opacity(stateManager.finishProgress != nil ? 0.85 : 0.40)
     }
 
     var body: some View {
         HStack(spacing: 12) {
             if isRecording {
                 HStack(spacing: 12) {
-                    RecordingMeter(stateManager: stateManager)
-                        .frame(width: 28, height: 18)
-                        .accessibilityHidden(true)
+                    Group {
+                        if stateManager.isPaused {
+                            Image(systemName: "pause.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(NotchtalkStyle.paused)
+                        } else {
+                            RecordingMeter(stateManager: stateManager)
+                        }
+                    }
+                    .frame(width: 28, height: 18)
+                    .accessibilityHidden(true)
                     RecordingClock(stateManager: stateManager)
                     Capsule()
                         .fill(.white.opacity(0.12))
@@ -151,12 +167,23 @@ private struct CaptureContent: View {
 
             Text(status)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(enterActive
-                    ? Color(red: 0.64, green: 0.86, blue: 0.72)
-                    : .white.opacity(stateManager.finishProgress != nil ? 0.85 : 0.40))
+                .foregroundStyle(statusTint)
                 .contentTransition(.opacity)
                 .frame(width: 78, alignment: .center)
                 .animation(.easeInOut(duration: 0.22), value: status)
+
+            if isRecording {
+                Button { stateManager.togglePause() } label: {
+                    Image(systemName: stateManager.isPaused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(stateManager.isPaused ? NotchtalkStyle.paused : .white.opacity(0.55))
+                        .frame(width: 22, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(stateManager.isPaused ? "Resume recording" : "Pause recording")
+                .accessibilityLabel(stateManager.isPaused ? "Resume recording" : "Pause recording")
+            }
 
             if !isRecording && stateManager.processingControlsAvailable {
                 Button { stateManager.retryProcessing() } label: {
@@ -171,8 +198,8 @@ private struct CaptureContent: View {
                 .help("Cancel immediately")
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(isRecording ? "Recording" : "Transcribing")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(isRecording ? (stateManager.isPaused ? "Recording paused" : "Recording") : "Transcribing")
     }
 }
 

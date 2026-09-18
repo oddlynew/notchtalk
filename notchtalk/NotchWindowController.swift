@@ -32,7 +32,7 @@ final class NotchWindowController {
         }
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 60),
+            contentRect: NSRect(x: 0, y: 0, width: Self.panelWidth, height: Self.panelHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -44,7 +44,8 @@ final class NotchWindowController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        panel.ignoresMouseEvents = true
+        // The pill carries the pause button; the panel only exists while a capture runs.
+        panel.ignoresMouseEvents = false
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .none
 
@@ -78,14 +79,20 @@ final class NotchWindowController {
         panel?.orderOut(nil)
     }
 
+    // The panel takes clicks for the pause button, so it hugs the widest pill (260 pt)
+    // and keeps only enough margin for its shadow. Anything wider would swallow
+    // clicks meant for whatever sits behind it.
+    private static let panelWidth: CGFloat = 276
+    private static let panelHeight: CGFloat = 48
+
     private func updatePosition() {
         guard let panel else { return }
 
         // Use the main screen (the one with keyboard focus) or fall back to first screen
         guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
 
-        let panelWidth: CGFloat = 300
-        let panelHeight: CGFloat = 60
+        let panelWidth = Self.panelWidth
+        let panelHeight = Self.panelHeight
 
         // Prefer the camera-notch center when available; fall back to screen center.
         let centerX = notchCenterX(for: screen)
