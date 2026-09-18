@@ -49,6 +49,7 @@ struct NotchtalkMenu: View {
                 shortcut("Release before \(Int(settings.startHoldDelay * 1000)) ms", detail: "Keep recording")
                 shortcut("Hold beyond \(Int(settings.startHoldDelay * 1000)) ms", detail: "Release to finish")
                 shortcut("Hold again · \(Int(settings.finishHoldDelay * 1000)) ms", detail: "Finish & send")
+                shortcut("Click ⏸ or tap right ⌥", detail: "Pause & resume")
                 shortcut("Release Esc first", detail: "Cancel")
                 shortcut("Hold Esc, release ⌘", detail: "Transcribe only")
             }

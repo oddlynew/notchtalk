@@ -26,6 +26,7 @@ final class HotKeyManager: @unchecked Sendable {
     var onChordCancel: (@MainActor () -> Void)?
     var onHoldEnd: (@MainActor () -> Void)?
     var onCancel: (@MainActor () -> Void)?
+    var onTogglePause: (@MainActor () -> Void)?
 
     private init() {}
 
@@ -120,6 +121,20 @@ final class HotKeyManager: @unchecked Sendable {
                 }
             }
             return captured ? nil : Unmanaged.passUnretained(event)
+        }
+        if type == .flagsChanged && keyCode == 61 && event.flags.rawValue & UInt64(NX_DEVICERALTKEYMASK) != 0 {
+            lock.lock()
+            let gestureInFlight = gesture.down
+            lock.unlock()
+            if !gestureInFlight {
+                MainActor.assumeIsolated {
+                    let manager = NotchStateManager.shared
+                    if manager.state == .recording && manager.finishProgress == nil {
+                        DispatchQueue.main.async { [weak self] in self?.onTogglePause?() }
+                    }
+                }
+                return Unmanaged.passUnretained(event)
+            }
         }
         if type == .keyDown || (type == .flagsChanged && keyCode != 54) {
             lock.lock()

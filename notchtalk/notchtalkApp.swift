@@ -83,6 +83,9 @@ final class AppController {
             self.gestureStartedRecording = false
             self.stateManager.stopRecording(submitAfterPaste: SettingsManager.shared.sendWithEnter && !self.stateManager.noSendForRecording)
         }
+        HotKeyManager.shared.onTogglePause = { [weak self] in
+            self?.stateManager.togglePause()
+        }
         HotKeyManager.shared.onCancel = { [weak self] in
             guard let self else { return }
             switch self.stateManager.state {
@@ -160,7 +163,7 @@ final class AppController {
     func showAbout() {
         let alert = NSAlert()
         alert.messageText = "Notchtalk"
-        alert.informativeText = "Press Right ⌘ to start immediately. Release within 0.8 seconds to keep recording; hold longer and release to finish. Tap again and release to transcribe, or hold again for 0.8 seconds to transcribe and send.\nRelease Escape before right Command to cancel recording. Release right Command while holding Escape to transcribe without sending.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
+        alert.informativeText = "Press Right ⌘ to start immediately. Release within 0.8 seconds to keep recording; hold longer and release to finish. Tap again and release to transcribe, or hold again for 0.8 seconds to transcribe and send.\nRelease Escape before right Command to cancel recording. Release right Command while holding Escape to transcribe without sending.\nClick the pause button in the pill, or tap right ⌥, to pause and resume without ending the recording.\nIf Auto-paste is enabled, Notchtalk pastes at your cursor without overwriting your clipboard. Otherwise it copies to the clipboard."
         alert.alertStyle = .informational
         alert.runModal()
     }
