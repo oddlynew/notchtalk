@@ -21,6 +21,18 @@ final class AudioRecorder: NSObject {
         audioRecorder?.isRecording ?? false
     }
 
+    /// AVAudioRecorder keeps writing into the same file on resume, so paused time never enters the audio.
+    func pause() {
+        audioRecorder?.pause()
+        smoothedLevel = 0
+        onAudioLevelUpdate?(0)
+    }
+
+    /// False keeps the caller paused rather than pretending to capture audio.
+    func resume() -> Bool {
+        audioRecorder?.record() ?? false
+    }
+
     func startRecording() async throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
         let fileName = "notchtalk_recording_\(Date().timeIntervalSince1970).m4a"
