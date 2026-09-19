@@ -135,13 +135,16 @@ final class AppController {
     }
 
     private var pillOffersAButton: Bool {
-        stateManager.state == .recording || stateManager.processingControlsAvailable
+        // The finish gesture hides the pause button, so the panel stops taking clicks with it.
+        (stateManager.state == .recording && stateManager.finishProgress == nil)
+            || stateManager.processingControlsAvailable
     }
 
     private func observeStateChanges() {
         func observe() {
             withObservationTracking {
                 _ = stateManager.state
+                _ = stateManager.finishProgress
                 _ = stateManager.processingControlsAvailable
             } onChange: { [weak self] in
                 Task { @MainActor [weak self] in

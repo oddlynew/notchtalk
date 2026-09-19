@@ -150,6 +150,7 @@ final class NotchStateManager {
             } catch {
                 await MainActor.run {
                     AudioDuckingService.shared.endDucking()
+                    self.isPaused = false
                     self.state = .error("Mic error")
                     SoundManager.shared.playErrorSound()
                 }
