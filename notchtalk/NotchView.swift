@@ -172,7 +172,7 @@ private struct CaptureContent: View {
                 .frame(width: 78, alignment: .center)
                 .animation(.easeInOut(duration: 0.22), value: status)
 
-            if isRecording {
+            if isRecording && stateManager.finishProgress == nil {
                 Button { stateManager.togglePause() } label: {
                     Image(systemName: stateManager.isPaused ? "play.fill" : "pause.fill")
                         .font(.system(size: 11, weight: .semibold))

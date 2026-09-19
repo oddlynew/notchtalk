@@ -29,8 +29,10 @@ final class AudioRecorder: NSObject {
     }
 
     /// False keeps the caller paused rather than pretending to capture audio.
+    /// With no recorder yet, a pause that never reached one is simply dropped.
     func resume() -> Bool {
-        audioRecorder?.record() ?? false
+        guard let audioRecorder else { return true }
+        return audioRecorder.record()
     }
 
     func startRecording() async throws -> URL {

@@ -143,7 +143,9 @@ final class NotchStateManager {
                 // Update duration timer
                 while !Task.isCancelled && (audioRecorder.isRecording || isPaused) {
                     try? await Task.sleep(for: .milliseconds(100))
-                    if !isPaused { recordingDuration += 0.1 }
+                    guard !Task.isCancelled else { break }
+                    // Read the recorder instead of counting ticks; currentTime freezes while paused.
+                    recordingDuration = audioRecorder.recordedDuration
                 }
             } catch {
                 await MainActor.run {
@@ -158,12 +160,14 @@ final class NotchStateManager {
     /// Pausing keeps the recording open; AVAudioRecorder resumes into the same file,
     /// so the paused time never reaches the audio or the transcript.
     func togglePause() {
-        guard state == .recording else { return }
+        guard state == .recording, finishProgress == nil else { return }
         if isPaused {
             guard audioRecorder.resume() else { return }
             isPaused = false
         } else {
             audioRecorder.pause()
+            // A recorder that refuses to pause keeps capturing; never claim a pause we do not have.
+            guard !audioRecorder.isRecording else { return }
             isPaused = true
             audioLevel = 0
         }
