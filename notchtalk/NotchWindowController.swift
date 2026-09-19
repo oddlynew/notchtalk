@@ -44,8 +44,8 @@ final class NotchWindowController {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
-        // The pill carries the pause button; the panel only exists while a capture runs.
-        panel.ignoresMouseEvents = false
+        // Clicks are taken only while the pill actually offers a button.
+        panel.ignoresMouseEvents = true
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .none
 
@@ -68,6 +68,11 @@ final class NotchWindowController {
                 self?.updatePosition()
             }
         }
+    }
+
+    /// A panel that takes clicks also blocks them, so it only does that when a button is there.
+    func setInteractive(_ interactive: Bool) {
+        panel?.ignoresMouseEvents = !interactive
     }
 
     func show() {

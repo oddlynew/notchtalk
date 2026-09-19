@@ -12,7 +12,7 @@ Notchtalk is intentionally small. It is not planned to be paid, and it is likely
 - Global hotkey:
   - Tap **Right Command (⌘)** to start recording.
   - Tap **Right Command (⌘)** again to stop and transcribe.
-  - Click the **pause button** in the pill (or tap **Right Option (⌥)**) to pause and resume a running recording.
+  - Click the **pause button** in the pill to pause and resume a running recording.
   - Press **Esc** to cancel recording/transcription immediately. Cancelled audio remains available in History for 24 hours.
 - Shows a small “pill” UI near the notch/screen center while active.
 - Lets you choose OpenAI or ElevenLabs Scribe v2 as the transcription provider.
@@ -156,9 +156,11 @@ A provider response with no text is shown as **No speech detected** and recorded
 
 ### Pausing a recording
 
-A running recording can be paused and resumed without ending it. Click the pause button on the right of the pill, or tap right Option (⌥) while recording. The pill turns amber, shows "Paused" and freezes the clock; the paused time never enters the audio, so the transcript is one continuous text without it.
+A running recording can be paused and resumed without ending it. Click the pause button on the right of the pill. The pill turns amber, shows "Paused" and freezes the clock; the paused time never enters the audio, so the transcript is one continuous text without it. Pause is deliberately mouse only: every keyboard gesture is already taken, and the keys keep their meaning.
 
-Right Command and Escape keep their behaviour while paused: right Command finishes the recording (the audio recorded so far is transcribed, no need to resume first), Escape cancels it. The right Option shortcut is ignored while a right Command gesture is in flight, so no existing gesture changes.
+Right Command and Escape keep their behaviour while paused: right Command finishes the recording (the audio recorded so far is transcribed, no need to resume first), Escape cancels it. The button is not offered while a right Command finish gesture is running, because that gesture is already committed to ending the recording.
+
+The pill takes mouse clicks only while it actually offers a button (recording, or transcription slow enough to show retry and cancel). In every other state the panel stays click-through, so it never blocks what is behind it.
 
 `scripts/verify_pause_audio.swift` checks the assumption this rests on (needs microphone permission, takes about 15 seconds):
 
