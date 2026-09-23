@@ -40,6 +40,16 @@ struct AmbientBufferTests {
         #expect(buffer.last(8) == Array(10...14))
     }
 
+    @Test func clearingStartsANewSession() {
+        let buffer = AmbientBuffer(capacity: 10)
+        buffer.append([1, 2, 3])
+        let before = buffer.session
+        buffer.clear()
+        #expect(buffer.count == 0)
+        #expect(buffer.session == before + 1)
+        #expect(buffer.capacity == 10)
+    }
+
     @Test func turningAmbientOffDiscardsTheWindow() {
         let recorder = AmbientRecorder()
         recorder.buffer.resize(capacity: 100)

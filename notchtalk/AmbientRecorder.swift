@@ -16,7 +16,8 @@ final class AmbientBuffer {
     private var samples: [Int16]
     private var writeIndex = 0
     private(set) var count = 0
-    /// Bumped by `discard`, so samples a stopped tap already queued never land afterwards.
+    /// Bumped by every clear, so samples a tap queued before it never land afterwards.
+    /// Capture resumes only through a new tap, which carries the new session.
     private(set) var session = 0
 
     var capacity: Int { samples.count }
@@ -58,13 +59,13 @@ final class AmbientBuffer {
         samples.withUnsafeMutableBufferPointer { $0.update(repeating: 0) }
         writeIndex = 0
         count = 0
+        session += 1
     }
 
     /// Overwrites the audio before letting go of the memory, so none of it lingers.
     func discard() {
         clear()
         samples = [0]
-        session += 1
     }
 }
 
@@ -82,7 +83,8 @@ final class AmbientRecorder {
     let buffer = AmbientBuffer(capacity: 1)
     private var engine: AVAudioEngine?
     private var configurationObserver: NSObjectProtocol?
-    private var sleepObserver: NSObjectProtocol?
+    private var sleepObservers: [NSObjectProtocol] = []
+    private var asleep = false
     private var wanted = false
     private var retryTask: Task<Void, Never>?
 
@@ -95,6 +97,7 @@ final class AmbientRecorder {
         let capacity = windowMinutes * 60 * AmbientBuffer.sampleRate
         if buffer.capacity != capacity { buffer.resize(capacity: capacity) }
         wanted = true
+        observeSleep()
         if !isRunning { start() }
     }
 
@@ -107,6 +110,7 @@ final class AmbientRecorder {
     }
 
     private func start() {
+        guard !asleep else { return }
         let engine = AVAudioEngine()
         let input = engine.inputNode
         if let device = Self.preferredInputDevice() {
@@ -143,14 +147,31 @@ final class AmbientRecorder {
                 self.start()
             }
         }
-        // The window counts samples, not time: audio from before a sleep would pass for "the last minutes".
-        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.buffer.clear() }
-        }
+    }
+
+    /// The window counts samples, not time: audio from before a sleep would pass for "the last minutes".
+    /// So capture stops and the window empties on sleep, and a fresh capture starts on wake.
+    private func observeSleep() {
+        guard sleepObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        sleepObservers = [
+            center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.asleep = true
+                    self.retryTask?.cancel()
+                    self.stopEngine()
+                    self.buffer.clear()
+                }
+            },
+            center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.asleep = false
+                    if self.wanted && !self.isRunning { self.start() }
+                }
+            }
+        ]
     }
 
     /// No microphone yet (unplugged, or launched before it was connected): try again until one appears.
@@ -160,7 +181,7 @@ final class AmbientRecorder {
         retryTask?.cancel()
         retryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(5))
-            guard let self, !Task.isCancelled, self.wanted, !self.isRunning else { return }
+            guard let self, !Task.isCancelled, self.wanted, !self.asleep, !self.isRunning else { return }
             self.start()
         }
     }
@@ -170,10 +191,6 @@ final class AmbientRecorder {
             NotificationCenter.default.removeObserver(configurationObserver)
         }
         configurationObserver = nil
-        if let sleepObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver)
-        }
-        sleepObserver = nil
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
