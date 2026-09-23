@@ -29,25 +29,30 @@ struct ShortcutGesture {
 }
 
 // Two clean taps of one modifier: press and release, nothing else in between, both quickly.
+// Fires on the second release, so a second press that turns into a chord (Option+L for @) never counts.
 struct DoubleTapGesture {
     private var pressedAt: TimeInterval?
     private var tappedAt: TimeInterval?
+    private var secondPress = false
     private let window: TimeInterval = 0.35
 
     /// `key` is false for every other key or modifier, which breaks the sequence.
     mutating func handle(key: Bool, down: Bool, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         guard key else { self = DoubleTapGesture(); return false }
         if down {
-            if let tappedAt, now - tappedAt <= window {
-                self = DoubleTapGesture()
-                return true
-            }
+            secondPress = tappedAt.map { now - $0 <= window } ?? false
             tappedAt = nil
             pressedAt = now
-        } else {
-            tappedAt = pressedAt.flatMap { now - $0 <= window ? now : nil }
-            pressedAt = nil
+            return false
         }
+        let quick = pressedAt.map { now - $0 <= window } ?? false
+        if quick && secondPress {
+            self = DoubleTapGesture()
+            return true
+        }
+        tappedAt = quick ? now : nil
+        pressedAt = nil
+        secondPress = false
         return false
     }
 }

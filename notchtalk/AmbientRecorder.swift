@@ -3,6 +3,7 @@
 //  notchtalk
 //
 
+import AppKit
 import AVFoundation
 import Foundation
 
@@ -51,12 +52,16 @@ final class AmbientBuffer {
         append(tail)
     }
 
-    /// Overwrites the audio before letting go of the memory, so none of it lingers.
-    func discard() {
+    func clear() {
         samples.withUnsafeMutableBufferPointer { $0.update(repeating: 0) }
-        samples = [0]
         writeIndex = 0
         count = 0
+    }
+
+    /// Overwrites the audio before letting go of the memory, so none of it lingers.
+    func discard() {
+        clear()
+        samples = [0]
     }
 }
 
@@ -74,6 +79,7 @@ final class AmbientRecorder {
     let buffer = AmbientBuffer(capacity: 1)
     private var engine: AVAudioEngine?
     private var configurationObserver: NSObjectProtocol?
+    private var sleepObserver: NSObjectProtocol?
 
     /// Starts, resizes, or stops (and discards) to match the settings.
     func update(enabled: Bool, windowMinutes: Int) {
@@ -116,11 +122,20 @@ final class AmbientRecorder {
             object: engine,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
+            // Apple: never tear the engine down inside this notification's handler, it can deadlock.
+            Task { @MainActor [weak self] in
                 guard let self, self.isRunning else { return }
                 self.stopEngine()
                 self.start()
             }
+        }
+        // The window counts samples, not time: audio from before a sleep would pass for "the last minutes".
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.buffer.clear() }
         }
     }
 
@@ -129,6 +144,10 @@ final class AmbientRecorder {
             NotificationCenter.default.removeObserver(configurationObserver)
         }
         configurationObserver = nil
+        if let sleepObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver)
+        }
+        sleepObserver = nil
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
