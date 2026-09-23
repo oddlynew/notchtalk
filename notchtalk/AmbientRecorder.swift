@@ -151,7 +151,9 @@ final class AmbientRecorder {
     }
 
     /// No microphone yet (unplugged, or launched before it was connected): try again until one appears.
+    /// Capture is broken, so the window no longer reaches up to now; drop it rather than pass old audio off as recent.
     private func retryLater() {
+        buffer.clear()
         retryTask?.cancel()
         retryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(5))
