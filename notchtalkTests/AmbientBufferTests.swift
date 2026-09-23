@@ -47,6 +47,7 @@ struct AmbientBufferTests {
         recorder.update(enabled: false, windowMinutes: 10)
         #expect(recorder.buffer.count == 0)
         #expect(recorder.buffer.capacity == 1)
+        #expect(recorder.buffer.session == 1)
         #expect(recorder.buffer.last(100) == [])
         recorder.buffer.append([7])
         #expect(recorder.buffer.last(100) == [7])

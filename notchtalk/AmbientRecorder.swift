@@ -16,6 +16,8 @@ final class AmbientBuffer {
     private var samples: [Int16]
     private var writeIndex = 0
     private(set) var count = 0
+    /// Bumped by `discard`, so samples a stopped tap already queued never land afterwards.
+    private(set) var session = 0
 
     var capacity: Int { samples.count }
     var duration: TimeInterval { Double(count) / Double(Self.sampleRate) }
@@ -62,6 +64,7 @@ final class AmbientBuffer {
     func discard() {
         clear()
         samples = [0]
+        session += 1
     }
 }
 
@@ -80,6 +83,8 @@ final class AmbientRecorder {
     private var engine: AVAudioEngine?
     private var configurationObserver: NSObjectProtocol?
     private var sleepObserver: NSObjectProtocol?
+    private var wanted = false
+    private var retryTask: Task<Void, Never>?
 
     /// Starts, resizes, or stops (and discards) to match the settings.
     func update(enabled: Bool, windowMinutes: Int) {
@@ -89,10 +94,14 @@ final class AmbientRecorder {
         }
         let capacity = windowMinutes * 60 * AmbientBuffer.sampleRate
         if buffer.capacity != capacity { buffer.resize(capacity: capacity) }
+        wanted = true
         if !isRunning { start() }
     }
 
     func stop() {
+        wanted = false
+        retryTask?.cancel()
+        retryTask = nil
         stopEngine()
         buffer.discard()
     }
@@ -102,8 +111,9 @@ final class AmbientRecorder {
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0,
-              let tap = Self.makeTap(from: inputFormat, into: buffer) else {
+              let tap = Self.makeTap(from: inputFormat, into: buffer, session: buffer.session) else {
             NSLog("Ambient: no usable input format")
+            retryLater()
             return
         }
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat, block: tap)
@@ -112,6 +122,7 @@ final class AmbientRecorder {
         } catch {
             input.removeTap(onBus: 0)
             NSLog("Ambient: engine failed to start: \(error.localizedDescription)")
+            retryLater()
             return
         }
         self.engine = engine
@@ -139,6 +150,16 @@ final class AmbientRecorder {
         }
     }
 
+    /// No microphone yet (unplugged, or launched before it was connected): try again until one appears.
+    private func retryLater() {
+        retryTask?.cancel()
+        retryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self, !Task.isCancelled, self.wanted, !self.isRunning else { return }
+            self.start()
+        }
+    }
+
     private func stopEngine() {
         if let configurationObserver {
             NotificationCenter.default.removeObserver(configurationObserver)
@@ -155,7 +176,11 @@ final class AmbientRecorder {
     }
 
     /// Built outside the main actor: AVAudioEngine calls the tap on its own thread.
-    private nonisolated static func makeTap(from inputFormat: AVAudioFormat, into buffer: AmbientBuffer) -> AVAudioNodeTapBlock? {
+    private nonisolated static func makeTap(
+        from inputFormat: AVAudioFormat,
+        into buffer: AmbientBuffer,
+        session: Int
+    ) -> AVAudioNodeTapBlock? {
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
             sampleRate: Double(AmbientBuffer.sampleRate),
@@ -183,7 +208,9 @@ final class AmbientRecorder {
             guard error == nil, let channel = output.int16ChannelData?[0] else { return }
             let samples = Array(UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { buffer.append(samples) }
+                MainActor.assumeIsolated {
+                    if buffer.session == session { buffer.append(samples) }
+                }
             }
         }
     }
