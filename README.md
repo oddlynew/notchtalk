@@ -154,6 +154,25 @@ The menu bar panel offers **Copy latest** for the most recent successful attempt
 
 A provider response with no text is shown as **No speech detected** and recorded as a failed attempt, with the audio retained for retry. It never pastes, clears the clipboard, or sends Enter. Check the selected macOS input device and its input volume when this happens repeatedly.
 
+### Ambient mode
+
+For the moments you forgot to record. Turn on **Ambient** in the menu or in Settings, and Notchtalk keeps listening into a rolling window of the last 5, 10 or 20 minutes (default 10). When something worth keeping was just said, ask for it:
+
+- Menu: **Transcribe last 2 / 5 / 10 / 20 min** (up to the window length). The result goes to the clipboard, because the open menu holds the keyboard focus.
+- Double-tap **right Option (⌥)**: transcribes the whole window and delivers it like a recording (paste at the cursor with Auto-paste, otherwise the clipboard). Never sends Enter. Can be turned off in Settings.
+
+The recall uses the selected provider with the same retries and timeouts as a normal recording. It shows up in History labelled "Ambient, N min", and its audio is retained for 24 hours like every other recording.
+
+Normal recording, pause, Escape and every shortcut work exactly as before while ambient mode runs. Ambient capture uses its own audio engine next to the recorder; macOS lets both read the microphone at the same time.
+
+Privacy: the window lives only in memory as 16 kHz mono audio (about 18 MB for 10 minutes). Nothing is written to disk or sent anywhere until you ask for a transcript. Turning ambient mode off or quitting discards it at once. The menu bar icon turns into an ear while ambient mode listens, and the macOS microphone indicator stays on.
+
+`scripts/verify_ambient_capture.swift` checks parallel capture, idle cost, encoding and discarding against the app's own code (needs microphone permission for the terminal, plays and shows nothing, takes about 40 seconds):
+
+```bash
+swiftc -parse-as-library -O scripts/verify_ambient_capture.swift notchtalk/AmbientRecorder.swift -o .build/verify_ambient && .build/verify_ambient
+```
+
 ### Pausing a recording
 
 A running recording can be paused and resumed without ending it. Click the pause button on the right of the pill. The pill turns amber, shows "Paused" and freezes the clock; the paused time never enters the audio, so the transcript is one continuous text without it. Pause is deliberately mouse only: every keyboard gesture is already taken, and the keys keep their meaning.
