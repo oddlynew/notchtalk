@@ -109,6 +109,9 @@ final class AmbientRecorder {
     private func start() {
         let engine = AVAudioEngine()
         let input = engine.inputNode
+        if let device = Self.preferredInputDevice() {
+            Self.pin(input, to: device)
+        }
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0,
               let tap = Self.makeTap(from: inputFormat, into: buffer, session: buffer.session) else {
@@ -175,6 +178,65 @@ final class AmbientRecorder {
         engine?.stop()
         engine = nil
         isRunning = false
+    }
+
+    /// A Bluetooth headset used as input drops into call quality for as long as ambient listens,
+    /// so music sounds worse. Listen through the built-in microphone then, when the Mac has one.
+    nonisolated static func preferredInputDevice() -> AudioDeviceID? {
+        guard let defaultInput = property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, AudioDeviceID(0)),
+              let transport = property(defaultInput, kAudioDevicePropertyTransportType, UInt32(0)),
+              transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE else {
+            return nil
+        }
+        return builtInInputDevice()
+    }
+
+    nonisolated static func builtInInputDevice() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else { return nil }
+        var devices = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &devices) == noErr else { return nil }
+        return devices.first { device in
+            var streams = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreams,
+                mScope: kAudioObjectPropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var streamSize: UInt32 = 0
+            return property(device, kAudioDevicePropertyTransportType, UInt32(0)) == kAudioDeviceTransportTypeBuiltIn
+                && AudioObjectGetPropertyDataSize(device, &streams, 0, nil, &streamSize) == noErr
+                && streamSize > 0
+        }
+    }
+
+    nonisolated static func pin(_ input: AVAudioInputNode, to device: AudioDeviceID) {
+        guard let unit = input.audioUnit else { return }
+        var device = device
+        let status = AudioUnitSetProperty(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &device,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        if status != noErr { NSLog("Ambient: could not switch to the built-in microphone (\(status))") }
+    }
+
+    private nonisolated static func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ initial: T) -> T? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var value = initial
+        var size = UInt32(MemoryLayout<T>.size)
+        return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr ? value : nil
     }
 
     /// Built outside the main actor: AVAudioEngine calls the tap on its own thread.

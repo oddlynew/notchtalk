@@ -200,7 +200,7 @@ struct SettingsView: View {
             } header: {
                 Text("Ambient")
             } footer: {
-                Text("Ambient mode listens all the time and keeps only the last minutes in memory. Nothing is saved or sent until you ask for a transcript from the menu or with the shortcut. Turning it off or quitting discards the audio at once. Normal recordings work as usual alongside it.")
+                Text("Ambient mode listens all the time and keeps only the last minutes in memory. Nothing is saved or sent until you ask for a transcript from the menu or with the shortcut. Turning it off or quitting discards the audio at once. Normal recordings work as usual alongside it. With AirPods or another Bluetooth headset as input, ambient mode listens through the Mac's built-in microphone, so your headset keeps its full sound quality.")
                     .foregroundStyle(.secondary)
             }
         }

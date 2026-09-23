@@ -3,10 +3,11 @@
 // 1. a normal AVAudioRecorder recording and the ambient engine capture the microphone at the same time,
 // 2. idle CPU and memory of the running ambient capture,
 // 3. encoding a full 10 minute window for upload,
-// 4. turning ambient off discards the window.
+// 4. the built-in microphone path used while AirPods are the input,
+// 5. turning ambient off discards the window.
 //
 // Needs microphone permission for the terminal (it never asks), plays nothing, shows nothing,
-// and takes about 40 seconds:
+// and takes about 45 seconds:
 //   swiftc -parse-as-library -O scripts/verify_ambient_capture.swift notchtalk/AmbientRecorder.swift -o .build/verify_ambient && .build/verify_ambient
 //
 
@@ -125,7 +126,32 @@ func run() {
     expect(abs(encodedDuration - 600) < 1, "encoded file should hold 600 s")
     expect(sizeMB < 25, "upload must stay under the 25 MB provider limit")
 
-    // 4. Off discards.
+    // 4. The built-in microphone path used while AirPods are the input.
+    guard let builtIn = AmbientRecorder.builtInInputDevice() else {
+        print("built-in microphone: none on this Mac, AirPods stay the ambient input")
+        return finish(ambient)
+    }
+    let pinned = AVAudioEngine()
+    AmbientRecorder.pin(pinned.inputNode, to: builtIn)
+    let pinnedFormat = pinned.inputNode.outputFormat(forBus: 0)
+    var pinnedFrames = 0
+    pinned.inputNode.installTap(onBus: 0, bufferSize: 4096, format: pinnedFormat) { buffer, _ in
+        DispatchQueue.main.async { pinnedFrames += Int(buffer.frameLength) }
+    }
+    expect((try? pinned.start()) != nil, "engine pinned to the built-in microphone did not start")
+    wait(2)
+    pinned.inputNode.removeTap(onBus: 0)
+    pinned.stop()
+    let bluetoothNow = AmbientRecorder.preferredInputDevice() != nil
+    print(String(format: "built-in pin: device %u captured %.2f s at %.0f Hz; default input is Bluetooth now: %@",
+                 builtIn, Double(pinnedFrames) / pinnedFormat.sampleRate, pinnedFormat.sampleRate, bluetoothNow ? "yes" : "no"))
+    expect(pinnedFrames > 0, "engine pinned to the built-in microphone captured nothing")
+    finish(ambient)
+}
+
+@MainActor
+func finish(_ ambient: AmbientRecorder) {
+    // 5. Off discards.
     ambient.update(enabled: false, windowMinutes: 10)
     expect(!ambient.isRunning && ambient.buffer.count == 0, "turning ambient off must discard the window")
     print("PASS: ambient capture runs beside normal recordings and stays within budget")
