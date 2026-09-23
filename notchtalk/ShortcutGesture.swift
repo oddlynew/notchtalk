@@ -27,3 +27,27 @@ struct ShortcutGesture {
     }
     mutating func cancel() { down = false; holding = false; allowed = false }
 }
+
+// Two clean taps of one modifier: press and release, nothing else in between, both quickly.
+struct DoubleTapGesture {
+    private var pressedAt: TimeInterval?
+    private var tappedAt: TimeInterval?
+    private let window: TimeInterval = 0.35
+
+    /// `key` is false for every other key or modifier, which breaks the sequence.
+    mutating func handle(key: Bool, down: Bool, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard key else { self = DoubleTapGesture(); return false }
+        if down {
+            if let tappedAt, now - tappedAt <= window {
+                self = DoubleTapGesture()
+                return true
+            }
+            tappedAt = nil
+            pressedAt = now
+        } else {
+            tappedAt = pressedAt.flatMap { now - $0 <= window ? now : nil }
+            pressedAt = nil
+        }
+        return false
+    }
+}

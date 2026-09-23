@@ -33,7 +33,8 @@ final class AppController {
         if !hasAccessibilityPermission || !hasMicrophonePermission {
             return "exclamationmark.triangle.fill"
         }
-        return "mic.fill"
+        // Ambient keeps the microphone open; the menu bar says so at a glance.
+        return AmbientRecorder.shared.isRunning ? "ear.fill" : "mic.fill"
     }
 
     init() {
@@ -83,6 +84,11 @@ final class AppController {
             self.gestureStartedRecording = false
             self.stateManager.stopRecording(submitAfterPaste: SettingsManager.shared.sendWithEnter && !self.stateManager.noSendForRecording)
         }
+        HotKeyManager.shared.onAmbientRecall = {
+            let settings = SettingsManager.shared
+            guard settings.ambientEnabled, settings.ambientHotKeyEnabled else { return }
+            NotchStateManager.shared.transcribeAmbient(minutes: settings.ambientWindowMinutes, allowPaste: true)
+        }
         HotKeyManager.shared.onCancel = { [weak self] in
             guard let self else { return }
             switch self.stateManager.state {
@@ -95,6 +101,7 @@ final class AppController {
 
         checkAndStartHotKey()
         checkMicrophonePermission()
+        SettingsManager.shared.applyAmbient()
         observeStateChanges()
     }
 
@@ -130,6 +137,7 @@ final class AppController {
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             Task { @MainActor [weak self] in
                 self?.hasMicrophonePermission = granted
+                SettingsManager.shared.applyAmbient()
             }
         }
     }

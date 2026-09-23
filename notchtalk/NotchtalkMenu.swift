@@ -6,6 +6,7 @@ struct NotchtalkMenu: View {
     private let manager = NotchStateManager.shared
     @State private var copied = false
     @Bindable private var settings = SettingsManager.shared
+    private let ambient = AmbientRecorder.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -44,6 +45,21 @@ struct NotchtalkMenu: View {
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055)))
             Toggle("Auto-send on release", isOn: $settings.sendWithEnter)
                 .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
+            Toggle("Ambient", isOn: $settings.ambientEnabled)
+                .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
+            if settings.ambientEnabled {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(ambientStatus).font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Text("Transcribe last").font(.system(size: 11))
+                        ForEach(AmbientRecorder.recallChoices.filter { $0 <= settings.ambientWindowMinutes }, id: \.self) { minutes in
+                            Button("\(minutes) min") { manager.transcribeAmbient(minutes: minutes, allowPaste: false) }
+                                .buttonStyle(QuietButtonStyle())
+                                .disabled(manager.state == .recording || manager.state == .processing)
+                        }
+                    }
+                }
+            }
             VStack(spacing: 9) {
                 shortcut("Press right ⌘", detail: "Start recording")
                 shortcut("Release before \(Int(settings.startHoldDelay * 1000)) ms", detail: "Keep recording")
@@ -52,6 +68,9 @@ struct NotchtalkMenu: View {
                 shortcut("Click ⏸ in the pill", detail: "Pause & resume")
                 shortcut("Release Esc first", detail: "Cancel")
                 shortcut("Hold Esc, release ⌘", detail: "Transcribe only")
+                if settings.ambientEnabled && settings.ambientHotKeyEnabled {
+                    shortcut("Double-tap right ⌥", detail: "Last \(settings.ambientWindowMinutes) min")
+                }
             }
             Divider()
             HStack {
@@ -74,6 +93,12 @@ struct NotchtalkMenu: View {
             Spacer()
             Text(detail).foregroundStyle(.secondary)
         }.font(.system(size: 11))
+    }
+    private var ambientStatus: String {
+        guard ambient.isRunning else {
+            return controller.hasMicrophonePermission ? "Not listening, the microphone did not start" : "Needs microphone access"
+        }
+        return "Listening. Keeps the last \(settings.ambientWindowMinutes) min, only on this Mac."
     }
     private var status: String {
         switch manager.state {

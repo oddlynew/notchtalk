@@ -188,6 +188,21 @@ struct SettingsView: View {
                 }
                 .foregroundStyle(.secondary)
             }
+
+            Section {
+                Toggle("Ambient mode", isOn: $settingsManager.ambientEnabled)
+                Picker("Keep the last", selection: $settingsManager.ambientWindowMinutes) {
+                    ForEach([5, 10, 20], id: \.self) { minutes in
+                        Text("\(minutes) min").tag(minutes)
+                    }
+                }
+                Toggle("Double-tap right ⌥ transcribes the whole window", isOn: $settingsManager.ambientHotKeyEnabled)
+            } header: {
+                Text("Ambient")
+            } footer: {
+                Text("Ambient mode listens all the time and keeps only the last minutes in memory. Nothing is saved or sent until you ask for a transcript from the menu or with the shortcut. Turning it off or quitting discards the audio at once. Normal recordings work as usual alongside it.")
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onChange(of: settingsManager.transcriptionProvider) {
@@ -260,6 +275,9 @@ struct SettingsView: View {
                 }
 
                 HStack(spacing: 10) {
+                    if let label = entry.label {
+                        Text(label)
+                    }
                     Text(entry.status.rawValue.capitalized)
                     Text("Retries: \(entry.retryCount)")
                     if let outputCharacterCount = entry.outputCharacterCount {
@@ -471,6 +489,9 @@ struct SettingsView: View {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
                         detailsRow(title: "Status", value: entry.status.rawValue.capitalized)
+                        if let label = entry.label {
+                            detailsRow(title: "Source", value: label)
+                        }
                         detailsRow(title: "Created", value: formattedTimestamp(entry.createdAt))
                         detailsRow(title: "Updated", value: formattedTimestamp(entry.updatedAt))
                         detailsRow(title: "Provider", value: (entry.provider ?? .openAI).displayName)
