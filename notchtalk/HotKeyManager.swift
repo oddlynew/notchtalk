@@ -15,6 +15,7 @@ final class HotKeyManager: @unchecked Sendable {
     private let lock = NSLock()
     private var gesture = ShortcutGesture()
     private var escapeGesture = EscapeReleaseGesture()
+    private var rightOptionTaps = DoubleTapGesture()
     private var holdTimer: DispatchWorkItem?
     private var currentHoldDelay: TimeInterval = 0.8
 
@@ -26,6 +27,7 @@ final class HotKeyManager: @unchecked Sendable {
     var onChordCancel: (@MainActor () -> Void)?
     var onHoldEnd: (@MainActor () -> Void)?
     var onCancel: (@MainActor () -> Void)?
+    var onAmbientRecall: (@MainActor () -> Void)?
 
     private init() {}
 
@@ -101,6 +103,11 @@ final class HotKeyManager: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        // Observe only: right Option still reaches the foreground app and cancels a Command gesture as before.
+        let rightOption = type == .flagsChanged && keyCode == 61
+        if rightOptionTaps.handle(key: rightOption, down: event.flags.rawValue & UInt64(NX_DEVICERALTKEYMASK) != 0) {
+            DispatchQueue.main.async { [weak self] in self?.onAmbientRecall?() }
+        }
         if keyCode == 53 && (type == .keyDown || type == .keyUp) {
             var captured = escapeGesture.capturesEvents
             if type == .keyDown {

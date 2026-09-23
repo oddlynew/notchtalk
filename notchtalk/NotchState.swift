@@ -520,7 +520,59 @@ final class NotchStateManager {
         }
     }
 
-    func retranscribe(diagnosticsID: UUID) {
+    /// Cuts the newest `minutes` out of the ambient window and transcribes them the way History
+    /// re-transcribes: same provider, retries and timeouts, never Enter. The menu passes
+    /// allowPaste false because its own panel holds the keyboard focus a paste would land in.
+    func transcribeAmbient(minutes: Int, allowPaste: Bool) {
+        guard state != .recording, state != .processing else { return }
+        let samples = AmbientRecorder.shared.buffer.last(minutes * 60 * AmbientBuffer.sampleRate)
+        guard !samples.isEmpty else { return }
+        let seconds = Double(samples.count) / Double(AmbientBuffer.sampleRate)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notchtalk_ambient_\(Date().timeIntervalSince1970).m4a")
+
+        Task {
+            do {
+                try await Task.detached { try AmbientRecorder.encode(samples, to: url) }.value
+            } catch {
+                try? FileManager.default.removeItem(at: url)
+                guard state != .recording, state != .processing else { return }
+                state = .error("Ambient failed")
+                SoundManager.shared.playErrorSound()
+                try? await Task.sleep(for: .seconds(2))
+                if case .error = state { reset() }
+                return
+            }
+            let provider = SettingsManager.shared.transcriptionProvider
+            let id = diagnosticsStore.startTranscription(
+                audioURL: url,
+                prompt: nil,
+                provider: provider,
+                speakerRecognitionEnabled: provider == .elevenLabs
+                    && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled,
+                label: "Ambient, \(Int((seconds / 60).rounded(.up))) min"
+            )
+            diagnosticsStore.retainAudio(sourceURL: url, for: id)
+            // A recording that started while we encoded wins; the audio waits in History.
+            guard state != .recording, state != .processing else {
+                diagnosticsStore.markFailed(for: id, message: "Busy with another recording; re-transcribe from History")
+                return
+            }
+            retranscribe(
+                diagnosticsID: id,
+                audioDuration: seconds,
+                reason: "Ambient recall: last \(Int(seconds)) s",
+                allowPaste: allowPaste
+            )
+        }
+    }
+
+    func retranscribe(
+        diagnosticsID: UUID,
+        audioDuration: TimeInterval? = nil,
+        reason: String = "Manual re-transcribe requested",
+        allowPaste: Bool = true
+    ) {
         if case .recording = state {
             return
         }
@@ -531,7 +583,7 @@ final class NotchStateManager {
         processingTask?.cancel()
         pendingSubmit = false
         canToggleProcessingEnter = false
-        pasteForCurrentTranscription = SettingsManager.shared.autoPasteEnabled
+        pasteForCurrentTranscription = allowPaste && SettingsManager.shared.autoPasteEnabled
         latestTranscript = nil
         guard let retainedAudioURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID) else {
             state = .error("No audio")
@@ -575,7 +627,7 @@ final class NotchStateManager {
         totalRetries = 0
         processingControlsAvailable = false
         currentRecordingURL = retainedAudioURL
-        currentRecordingDuration = nil
+        currentRecordingDuration = audioDuration
         activeDiagnosticsID = diagnosticsID
 
         let speakerRecognitionEnabled = provider == .elevenLabs
@@ -583,7 +635,7 @@ final class NotchStateManager {
         let prompt = provider == .openAI && !SettingsManager.shared.transcriptionPrompt.isEmpty
             ? SettingsManager.shared.transcriptionPrompt
             : nil
-        diagnosticsStore.prepareForManualRetry(for: diagnosticsID)
+        diagnosticsStore.prepareForManualRetry(for: diagnosticsID, reason: reason)
         diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
         startProcessingTimer()
 
@@ -595,7 +647,7 @@ final class NotchStateManager {
                     prompt: prompt,
                     provider: provider,
                     speakerRecognitionEnabled: speakerRecognitionEnabled,
-                    audioDuration: nil,
+                    audioDuration: audioDuration,
                     onRetry: { [weak self] attempt, totalRetries in
                         self?.retryAttempt = attempt
                         self?.totalRetries = totalRetries
@@ -618,7 +670,7 @@ final class NotchStateManager {
                     promptProvided: prompt != nil
                 )
 
-                if SettingsManager.shared.autoPasteEnabled {
+                if pasteForCurrentTranscription {
                     lastOutputDisposition = .pastedToCursor
                     ClipboardService.pastePreservingClipboard(transcription)
                 } else {

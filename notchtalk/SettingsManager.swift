@@ -52,6 +52,21 @@ final class SettingsManager {
             UserDefaults.standard.set(autoPasteEnabled, forKey: "autoPasteEnabled")
         }
     }
+    var ambientEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(ambientEnabled, forKey: "ambientEnabled")
+            applyAmbient()
+        }
+    }
+    var ambientWindowMinutes: Int {
+        didSet {
+            UserDefaults.standard.set(ambientWindowMinutes, forKey: "ambientWindowMinutes")
+            applyAmbient()
+        }
+    }
+    var ambientHotKeyEnabled: Bool {
+        didSet { UserDefaults.standard.set(ambientHotKeyEnabled, forKey: "ambientHotKeyEnabled") }
+    }
     var elevenLabsSpeakerRecognitionEnabled: Bool {
         didSet {
             UserDefaults.standard.set(elevenLabsSpeakerRecognitionEnabled, forKey: "elevenLabsSpeakerRecognitionEnabled")
@@ -85,6 +100,10 @@ final class SettingsManager {
         defaults.removeObject(forKey: "submitAfterContinuous")
         defaults.removeObject(forKey: "submitAfterHold")
         self.autoPasteEnabled = UserDefaults.standard.bool(forKey: "autoPasteEnabled")
+        self.ambientEnabled = defaults.bool(forKey: "ambientEnabled")
+        let savedWindow = defaults.integer(forKey: "ambientWindowMinutes")
+        self.ambientWindowMinutes = [5, 10, 20].contains(savedWindow) ? savedWindow : 10
+        self.ambientHotKeyEnabled = defaults.object(forKey: "ambientHotKeyEnabled") as? Bool ?? true
         self.elevenLabsSpeakerRecognitionEnabled = UserDefaults.standard.bool(forKey: "elevenLabsSpeakerRecognitionEnabled")
         self.elevenLabsSpeakerLibraryRecognitionEnabled = UserDefaults.standard.bool(
             forKey: "elevenLabsSpeakerLibraryRecognitionEnabled"
@@ -92,6 +111,11 @@ final class SettingsManager {
         self.hasOpenAIAPIKey = KeychainService.hasAPIKey(for: .openAI)
         self.hasElevenLabsAPIKey = KeychainService.hasAPIKey(for: .elevenLabs)
         defaults.set(self.sendWithEnter, forKey: "sendWithEnter")
+    }
+
+    /// Also called at launch and after microphone access is granted.
+    func applyAmbient() {
+        AmbientRecorder.shared.update(enabled: ambientEnabled, windowMinutes: ambientWindowMinutes)
     }
 
     func hasAPIKey(for provider: TranscriptionProvider) -> Bool {

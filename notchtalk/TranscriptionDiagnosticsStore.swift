@@ -39,6 +39,8 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
     var updatedAt: Date
     var status: Status
     var sourceAudioFilename: String
+    /// Set for recordings that did not come from the recording shortcut, e.g. "Ambient, 10 min".
+    var label: String?
     var provider: TranscriptionProvider?
     var speakerRecognitionEnabled: Bool?
     var promptProvided: Bool
@@ -56,6 +58,7 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
         updatedAt: Date = Date(),
         status: Status,
         sourceAudioFilename: String,
+        label: String? = nil,
         provider: TranscriptionProvider? = nil,
         speakerRecognitionEnabled: Bool? = nil,
         promptProvided: Bool,
@@ -72,6 +75,7 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
         self.updatedAt = updatedAt
         self.status = status
         self.sourceAudioFilename = sourceAudioFilename
+        self.label = label
         self.provider = provider
         self.speakerRecognitionEnabled = speakerRecognitionEnabled
         self.promptProvided = promptProvided
@@ -202,7 +206,8 @@ final class TranscriptionDiagnosticsStore {
         audioURL: URL,
         prompt: String?,
         provider: TranscriptionProvider = .openAI,
-        speakerRecognitionEnabled: Bool = false
+        speakerRecognitionEnabled: Bool = false,
+        label: String? = nil
     ) -> UUID {
         purgeExpiredRetainedAudio()
         let now = Date()
@@ -214,6 +219,7 @@ final class TranscriptionDiagnosticsStore {
             updatedAt: now,
             status: .pending,
             sourceAudioFilename: audioURL.lastPathComponent,
+            label: label,
             provider: provider,
             speakerRecognitionEnabled: provider == .elevenLabs ? speakerRecognitionEnabled : false,
             promptProvided: !(prompt?.isEmpty ?? true),
@@ -284,12 +290,12 @@ final class TranscriptionDiagnosticsStore {
         }
     }
 
-    func prepareForManualRetry(for id: UUID) {
+    func prepareForManualRetry(for id: UUID, reason: String = "Manual re-transcribe requested") {
         mutateEntry(id) { entry in
             entry.status = .pending
             entry.errorMessage = nil
             entry.retryCount = 0
-            entry.logs.append(.init(level: .info, message: "Manual re-transcribe requested"))
+            entry.logs.append(.init(level: .info, message: reason))
             if entry.logs.count > maxLogsPerEntry {
                 entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
             }
