@@ -165,7 +165,7 @@ The recall uses the selected provider with the same retries and timeouts as a no
 
 Normal recording, pause, Escape and every shortcut work exactly as before while ambient mode runs. Ambient capture uses its own audio engine next to the recorder; macOS lets both read the microphone at the same time.
 
-Privacy: the window lives only in memory as 16 kHz mono audio (about 18 MB for 10 minutes). Nothing is written to disk or sent anywhere until you ask for a transcript. Turning ambient mode off or quitting discards it at once. The menu bar icon turns into an ear while ambient mode listens, and the macOS microphone indicator stays on.
+Privacy: the window lives only in memory as 16 kHz mono audio (about 18 MB for 10 minutes). Nothing is written to disk or sent anywhere until you ask for a transcript. Turning ambient mode off or quitting discards it at once. The menu bar icon turns into an ear while ambient mode listens, and the macOS microphone indicator stays on. With AirPods or another Bluetooth headset as input, ambient mode listens through the built-in microphone instead, so the headset does not drop into call quality.
 
 `scripts/verify_ambient_capture.swift` checks parallel capture, idle cost, encoding and discarding against the app's own code (needs microphone permission for the terminal, plays and shows nothing, takes about 40 seconds):
 
