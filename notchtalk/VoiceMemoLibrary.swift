@@ -3,6 +3,7 @@
 //  notchtalk
 //
 
+import AVFoundation
 import Foundation
 import SQLite3
 import SwiftUI
@@ -34,10 +35,8 @@ final class VoiceMemoLibrary {
     private(set) var accessDenied = false
     @ObservationIgnored private var folderWatch: DispatchSourceFileSystemObject?
     private(set) var transcribed = Set(UserDefaults.standard.stringArray(forKey: VoiceMemoLibrary.transcribedKey) ?? [])
-
-    var open: [VoiceMemo] {
-        memos.filter { !transcribed.contains($0.id) }
-    }
+    /// Memos whose audio is being copied or converted before the upload starts.
+    private(set) var preparing: Set<String> = []
 
     /// Called on every success of a re-transcription (this tab, a History retry, the notch's retry),
     /// so a memo stays done after History trims or clears the entry.
@@ -56,7 +55,7 @@ final class VoiceMemoLibrary {
             files = try FileManager.default.contentsOfDirectory(
                 at: Self.folder,
                 includingPropertiesForKeys: [.creationDateKey]
-            ).filter { $0.pathExtension.lowercased() == "m4a" }
+            ).filter { ["m4a", "qta"].contains($0.pathExtension.lowercased()) }
         } catch {
             accessDenied = (error as NSError).code != NSFileReadNoSuchFileError
             memos = []
@@ -96,7 +95,7 @@ final class VoiceMemoLibrary {
     /// shared re-transcribe path. The transcript lands in History and on the clipboard, never pasted.
     func transcribe(_ memo: VoiceMemo) {
         let notch = NotchStateManager.shared
-        guard notch.state != .recording, notch.state != .processing else { return }
+        guard notch.state != .recording, notch.state != .processing, !preparing.contains(memo.id) else { return }
         let store = TranscriptionDiagnosticsStore.shared
         let provider = SettingsManager.shared.transcriptionProvider
         let id = store.startTranscription(
@@ -109,23 +108,64 @@ final class VoiceMemoLibrary {
         )
         // retainAudio moves its source, so it gets a copy (an APFS clone) and Apple's file stays put.
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_voicememo_\(id.uuidString).m4a")
-        do {
-            try FileManager.default.copyItem(at: memo.url, to: copy)
-        } catch {
-            store.markFailed(for: id, message: "Could not read the voice memo: \(error.localizedDescription)")
-            return
+        preparing.insert(memo.id)
+        Task {
+            defer { self.preparing.remove(memo.id) }
+            do {
+                if memo.url.pathExtension.lowercased() == "qta" {
+                    try await Self.exportStereoTrack(of: memo.url, to: copy)
+                } else {
+                    try FileManager.default.copyItem(at: memo.url, to: copy)
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: copy)
+                store.markFailed(for: id, message: "Could not read the voice memo: \(error.localizedDescription)")
+                return
+            }
+            guard notch.state != .recording, notch.state != .processing else {
+                try? FileManager.default.removeItem(at: copy)
+                store.markFailed(for: id, message: "Notchtalk was busy with another recording; transcribe the memo again")
+                return
+            }
+            guard store.retainAudio(sourceURL: copy, for: id) != nil else {
+                try? FileManager.default.removeItem(at: copy)
+                store.markFailed(for: id, message: "Could not keep a copy of the voice memo")
+                return
+            }
+            notch.retranscribe(
+                diagnosticsID: id,
+                audioDuration: memo.duration,
+                reason: "Voice memo \(memo.id)",
+                allowPaste: false
+            )
         }
-        guard store.retainAudio(sourceURL: copy, for: id) != nil else {
-            try? FileManager.default.removeItem(at: copy)
-            store.markFailed(for: id, message: "Could not keep a copy of the voice memo")
-            return
+    }
+
+    /// iPhones that record Spatial Audio save .qta: a QuickTime file holding a plain stereo AAC track
+    /// next to the spatial one. Neither provider takes .qta, so the AAC track goes out alone as .m4a,
+    /// copied without re-encoding.
+    static func exportStereoTrack(of source: URL, to destination: URL) async throws {
+        let asset = AVURLAsset(url: source)
+        var stereo: AVAssetTrack?
+        for track in try await asset.loadTracks(withMediaType: .audio) {
+            let formats = try await track.load(.formatDescriptions)
+            if formats.contains(where: { $0.mediaSubType == .mpeg4AAC }) {
+                stereo = track
+                break
+            }
         }
-        notch.retranscribe(
-            diagnosticsID: id,
-            audioDuration: memo.duration,
-            reason: "Voice memo \(memo.id)",
-            allowPaste: false
-        )
+        guard let stereo else { throw CocoaError(.fileReadCorruptFile) }
+        let composition = AVMutableComposition()
+        let audio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+        try audio?.insertTimeRange(try await stereo.load(.timeRange), of: stereo, at: .zero)
+        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        export.outputURL = destination
+        export.outputFileType = .m4a
+        await export.export()
+        if let error = export.error { throw error }
+        guard export.status == .completed else { throw CocoaError(.fileWriteUnknown) }
     }
 
     /// Title, date, duration and whether it sits in Recently Deleted, per recording filename, from
@@ -179,6 +219,12 @@ struct VoiceMemosView: View {
     private var library = VoiceMemoLibrary.shared
     private var diagnosticsStore = TranscriptionDiagnosticsStore.shared
     private var notch = NotchStateManager.shared
+    /// Shows a History entry; the memo list reuses History's transcript and log view.
+    let openInHistory: (UUID) -> Void
+
+    init(openInHistory: @escaping (UUID) -> Void) {
+        self.openInHistory = openInHistory
+    }
 
     var body: some View {
         Group {
@@ -193,14 +239,14 @@ struct VoiceMemosView: View {
                     }
                     Button("Try again") { library.reload() }
                 }
-            } else if library.open.isEmpty {
+            } else if library.memos.isEmpty {
                 ContentUnavailableView(
-                    library.memos.isEmpty ? "No voice memos yet" : "All voice memos transcribed",
-                    systemImage: library.memos.isEmpty ? "waveform" : "checkmark.circle",
+                    "No voice memos yet",
+                    systemImage: "waveform",
                     description: Text("New recordings from your iPhone appear here once iCloud has synced them.")
                 )
             } else {
-                List(library.open) { memo in
+                List(library.memos) { memo in
                     row(memo)
                 }
             }
@@ -213,7 +259,13 @@ struct VoiceMemosView: View {
 
     private func row(_ memo: VoiceMemo) -> some View {
         let latest = diagnosticsStore.entries.first { $0.sourceAudioFilename == memo.id }
+        let done = library.transcribed.contains(memo.id)
+        let transcript = diagnosticsStore.entries.first { $0.sourceAudioFilename == memo.id && $0.status == .succeeded }
         return HStack(spacing: 12) {
+            Image(systemName: done ? "checkmark.circle.fill" : "waveform")
+                .foregroundStyle(done ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                .frame(width: 18)
+                .accessibilityLabel(done ? "Transcribed" : "Not transcribed")
             VStack(alignment: .leading, spacing: 3) {
                 Text(memo.title).font(.headline).lineLimit(1)
                 HStack(spacing: 10) {
@@ -223,14 +275,19 @@ struct VoiceMemosView: View {
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary)
-                if latest?.status == .failed, let error = latest?.errorMessage {
+                if !done, latest?.status == .failed, let error = latest?.errorMessage {
                     Text(error).font(.caption).foregroundStyle(.red).lineLimit(1)
                 }
             }
             Spacer()
             // A pending entry that is not the running transcription was cut off by a quit; offer it again.
-            if let latest, notch.state == .processing, notch.activeDiagnosticsID == latest.id {
+            if library.preparing.contains(memo.id) || (latest != nil && notch.state == .processing && notch.activeDiagnosticsID == latest?.id) {
                 ProgressView().controlSize(.small)
+            } else if done {
+                // History keeps a limited number of entries; an older memo stays checked without one.
+                if let transcript {
+                    Button("Show transcript") { openInHistory(transcript.id) }
+                }
             } else {
                 Button("Transcribe") { library.transcribe(memo) }
                     .disabled(notch.state == .recording || notch.state == .processing || !SettingsManager.shared.hasAPIKey)

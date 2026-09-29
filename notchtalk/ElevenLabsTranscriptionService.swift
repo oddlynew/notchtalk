@@ -97,7 +97,10 @@ actor ElevenLabsTranscriptionService {
 
         for attempt in 0...maxRetries {
             do {
+                let requestStart = ContinuousClock.now
                 let (data, response) = try await upload(request, bodyURL)
+                // Upload plus ElevenLabs' processing; the trace ID lets ElevenLabs look up a slow request.
+                let requestTiming = "in \(formatDuration(ContinuousClock.now - requestStart)); trace=\(((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-trace-id")) ?? "none")"
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw TranscriptionError.invalidResponse
                 }
@@ -108,7 +111,7 @@ actor ElevenLabsTranscriptionService {
                         let delay = retryDelayForAttempt(attempt + 1, response: httpResponse)
                         await onRetry?(attempt + 1, maxRetries)
                         await onLog?(
-                            "ElevenLabs retry \(attempt + 1)/\(maxRetries) after HTTP \(httpResponse.statusCode) in \(formatDuration(delay))",
+                            "ElevenLabs retry \(attempt + 1)/\(maxRetries) after HTTP \(httpResponse.statusCode) \(requestTiming), waiting \(formatDuration(delay))",
                             .warning
                         )
                         try await Task.sleep(for: delay)
@@ -118,7 +121,7 @@ actor ElevenLabsTranscriptionService {
                 }
 
                 let transcriptionResponse = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
-                await onLog?("ElevenLabs HTTP \(httpResponse.statusCode); text_characters=\(transcriptionResponse.text.count); word_count=\(transcriptionResponse.words?.count ?? 0)", .info)
+                await onLog?("ElevenLabs HTTP \(httpResponse.statusCode) \(requestTiming); text_characters=\(transcriptionResponse.text.count); word_count=\(transcriptionResponse.words?.count ?? 0)", .info)
                 let transcript = Self.formattedTranscript(from: transcriptionResponse, diarize: diarize)
                 guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     throw TranscriptionError.emptyTranscript
