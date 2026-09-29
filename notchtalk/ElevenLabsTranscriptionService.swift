@@ -96,8 +96,8 @@ actor ElevenLabsTranscriptionService {
         )
 
         for attempt in 0...maxRetries {
+            let requestStart = ContinuousClock.now
             do {
-                let requestStart = ContinuousClock.now
                 let (data, response) = try await upload(request, bodyURL)
                 // Upload plus ElevenLabs' processing; the trace ID lets ElevenLabs look up a slow request.
                 let requestTiming = "in \(formatDuration(ContinuousClock.now - requestStart)); trace=\(((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-trace-id")) ?? "none")"
@@ -142,12 +142,13 @@ actor ElevenLabsTranscriptionService {
                     let delay = retryDelayForAttempt(attempt + 1)
                     await onRetry?(attempt + 1, maxRetries)
                     await onLog?(
-                        "ElevenLabs retry \(attempt + 1)/\(maxRetries) in \(formatDuration(delay)): \(error.localizedDescription)",
+                        "ElevenLabs retry \(attempt + 1)/\(maxRetries) in \(formatDuration(delay)) after \(formatDuration(ContinuousClock.now - requestStart)): \(error.localizedDescription)",
                         .warning
                     )
                     try await Task.sleep(for: delay)
                     continue
                 }
+                await onLog?("ElevenLabs failed after \(formatDuration(ContinuousClock.now - requestStart)): \(error.localizedDescription)", .error)
                 throw error
             }
         }

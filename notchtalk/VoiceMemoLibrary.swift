@@ -95,7 +95,7 @@ final class VoiceMemoLibrary {
     /// shared re-transcribe path. The transcript lands in History and on the clipboard, never pasted.
     func transcribe(_ memo: VoiceMemo) {
         let notch = NotchStateManager.shared
-        guard notch.state != .recording, notch.state != .processing, !preparing.contains(memo.id) else { return }
+        guard notch.state != .recording, notch.state != .processing, preparing.isEmpty else { return }
         let store = TranscriptionDiagnosticsStore.shared
         let provider = SettingsManager.shared.transcriptionProvider
         let id = store.startTranscription(
@@ -125,6 +125,12 @@ final class VoiceMemoLibrary {
             guard notch.state != .recording, notch.state != .processing else {
                 try? FileManager.default.removeItem(at: copy)
                 store.markFailed(for: id, message: "Notchtalk was busy with another recording; transcribe the memo again")
+                return
+            }
+            // The notch's own missing-key path would leave this entry pending.
+            guard KeychainService.hasAPIKey(for: provider) else {
+                try? FileManager.default.removeItem(at: copy)
+                store.markFailed(for: id, message: "No API key for \(provider.displayName)")
                 return
             }
             guard store.retainAudio(sourceURL: copy, for: id) != nil else {
@@ -290,7 +296,7 @@ struct VoiceMemosView: View {
                 }
             } else {
                 Button("Transcribe") { library.transcribe(memo) }
-                    .disabled(notch.state == .recording || notch.state == .processing || !SettingsManager.shared.hasAPIKey)
+                    .disabled(notch.state == .recording || notch.state == .processing || !library.preparing.isEmpty || !SettingsManager.shared.hasAPIKey)
             }
         }
         .padding(.vertical, 4)

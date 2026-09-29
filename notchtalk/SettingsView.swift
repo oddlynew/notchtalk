@@ -90,6 +90,7 @@ struct SettingsView: View {
                         selectedHistoryStatus = nil
                         searchText = ""
                         selectedHistoryID = id
+                        historyDetailsMode = .transcript
                         selectedTab = .history
                     }
                 case .settings: settingsTab
@@ -104,7 +105,7 @@ struct SettingsView: View {
     private var header: (title: String, subtitle: String) {
         switch selectedTab {
         case .history: ("Transcripts", "Revisit your recordings and their transcripts.")
-        case .voiceMemos: ("Voice Memos", "Recordings from the Voice Memos app. Transcribed ones carry a check and open in History.")
+        case .voiceMemos: ("Voice Memos", "Recordings from the Voice Memos app. Transcribed ones carry a check.")
         case .settings: ("Settings", "Recording, transcription and output preferences.")
         }
     }
