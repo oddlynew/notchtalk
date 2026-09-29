@@ -104,7 +104,7 @@ Use `./script/build_and_run.sh --verify` to launch and verify that the process s
 
 ## Voice Memos
 
-History & settings -> Voice Memos lists the recordings of Apple's Voice Memos app (synced from your iPhone via iCloud) that Notchtalk has not transcribed yet. **Transcribe** sends one with the selected provider; the transcript lands in History and on the clipboard, and the memo leaves the list. Notchtalk only reads Apple's files.
+History & settings -> Voice Memos lists the recordings of Apple's Voice Memos app (synced from your iPhone via iCloud) newest first. **Transcribe** sends one with the selected provider; the transcript lands in History and on the clipboard, and the memo stays in the list with a check. **Show transcript** opens it in History while History still keeps the entry. Spatial Audio recordings from recent iPhones (`.qta`) are listed too; their stereo track is sent as `.m4a`. Notchtalk only reads Apple's files.
 
 macOS protects that folder, so Notchtalk needs Full Disk Access once: System Settings -> Privacy & Security -> Full Disk Access -> turn on `notchtalk`, then quit and reopen it. The stable signing identity keeps the grant across rebuilds.
 
