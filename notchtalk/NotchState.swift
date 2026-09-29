@@ -669,6 +669,7 @@ final class NotchStateManager {
                     speakerRecognitionEnabled: speakerRecognitionEnabled,
                     promptProvided: prompt != nil
                 )
+                VoiceMemoLibrary.shared.rememberTranscribed(diagnosticsID)
 
                 if pasteForCurrentTranscription {
                     lastOutputDisposition = .pastedToCursor
