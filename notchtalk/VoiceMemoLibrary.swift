@@ -97,20 +97,12 @@ final class VoiceMemoLibrary {
         let notch = NotchStateManager.shared
         guard notch.state != .recording, notch.state != .processing, preparing.isEmpty else { return }
         let store = TranscriptionDiagnosticsStore.shared
-        let provider = SettingsManager.shared.transcriptionProvider
-        let id = store.startTranscription(
-            audioURL: memo.url,
-            prompt: nil,
-            provider: provider,
-            speakerRecognitionEnabled: provider == .elevenLabs
-                && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled,
-            label: Self.labelPrefix + memo.title
-        )
         // retainAudio moves its source, so it gets a copy (an APFS clone) and Apple's file stays put.
-        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_voicememo_\(id.uuidString).m4a")
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_voicememo_\(UUID().uuidString).m4a")
         preparing.insert(memo.id)
         Task {
             defer { self.preparing.remove(memo.id) }
+            var readError: Error?
             do {
                 if memo.url.pathExtension.lowercased() == "qta" {
                     try await Self.exportStereoTrack(of: memo.url, to: copy)
@@ -118,27 +110,35 @@ final class VoiceMemoLibrary {
                     try FileManager.default.copyItem(at: memo.url, to: copy)
                 }
             } catch {
+                readError = error
+            }
+            // The entry starts only now, so it records the provider that sends and a quit during
+            // the export leaves nothing pending.
+            let provider = SettingsManager.shared.transcriptionProvider
+            let id = store.startTranscription(
+                audioURL: memo.url,
+                prompt: nil,
+                provider: provider,
+                speakerRecognitionEnabled: provider == .elevenLabs
+                    && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled,
+                label: Self.labelPrefix + memo.title
+            )
+            @MainActor func fail(_ message: String) {
                 try? FileManager.default.removeItem(at: copy)
-                store.markFailed(for: id, message: "Could not read the voice memo: \(error.localizedDescription)")
-                return
+                store.markFailed(for: id, message: message)
+            }
+            if let readError {
+                return fail("Could not read the voice memo: \(readError.localizedDescription)")
             }
             guard notch.state != .recording, notch.state != .processing else {
-                try? FileManager.default.removeItem(at: copy)
-                store.markFailed(for: id, message: "Notchtalk was busy with another recording; transcribe the memo again")
-                return
+                return fail("Notchtalk was busy with another recording; transcribe the memo again")
             }
-            // The notch's own missing-key path would leave this entry pending. It sends with the
-            // provider selected now, which may have changed during the export.
-            let sendingProvider = SettingsManager.shared.transcriptionProvider
-            guard KeychainService.hasAPIKey(for: sendingProvider) else {
-                try? FileManager.default.removeItem(at: copy)
-                store.markFailed(for: id, message: "No API key for \(sendingProvider.displayName)")
-                return
+            // The notch's own missing-key path would leave this entry pending.
+            guard KeychainService.hasAPIKey(for: provider) else {
+                return fail("No API key for \(provider.displayName)")
             }
             guard store.retainAudio(sourceURL: copy, for: id) != nil else {
-                try? FileManager.default.removeItem(at: copy)
-                store.markFailed(for: id, message: "Could not keep a copy of the voice memo")
-                return
+                return fail("Could not keep a copy of the voice memo")
             }
             notch.retranscribe(
                 diagnosticsID: id,
@@ -268,7 +268,8 @@ struct VoiceMemosView: View {
     private func row(_ memo: VoiceMemo) -> some View {
         let latest = diagnosticsStore.entries.first { $0.sourceAudioFilename == memo.id }
         let done = library.transcribed.contains(memo.id)
-        let transcript = diagnosticsStore.entries.first { $0.sourceAudioFilename == memo.id && $0.status == .succeeded }
+        // A failed History retry keeps the earlier transcript on its entry.
+        let transcript = diagnosticsStore.entries.first { $0.sourceAudioFilename == memo.id && $0.transcriptText != nil }
         return HStack(spacing: 12) {
             Image(systemName: done ? "checkmark.circle.fill" : "waveform")
                 .foregroundStyle(done ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
