@@ -13,7 +13,7 @@ Notchtalk is intentionally small. It is not planned to be paid, and it is likely
   - Tap **Right Command (⌘)** to start recording.
   - Tap **Right Command (⌘)** again to stop and transcribe.
   - Click the **pause button** in the pill to pause and resume a running recording.
-  - Press **Esc** to cancel recording/transcription immediately. Cancelled audio remains available in History for 24 hours.
+  - Press **Esc** to cancel a recording immediately. A transcription still running after 10 seconds shows retry and cancel buttons in the pill. Cancelled audio remains available in History for 24 hours.
 - Shows a small “pill” UI near the notch/screen center while active.
 - Lets you choose OpenAI or ElevenLabs Scribe v2 as the transcription provider.
 - Stores provider API keys separately in the macOS Keychain.

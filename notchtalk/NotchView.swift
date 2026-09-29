@@ -19,7 +19,7 @@ struct NotchView: View {
         case .recording: return 228
         case .processing:
             return 78
-                + (stateManager.processingControlsAvailable ? 48 : 0)
+                + (stateManager.processingControlsAvailable ? 68 : 0)
         case .done: return 20
         case .error: return 180
         }
@@ -186,20 +186,26 @@ private struct CaptureContent: View {
             }
 
             if !isRecording && stateManager.processingControlsAvailable {
-                Button { stateManager.retryProcessing() } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.plain)
-                .help("Retry transcription")
-                Button { stateManager.cancel() } label: {
-                    Image(systemName: "xmark")
-                }
-                .buttonStyle(.plain)
-                .help("Cancel immediately")
+                processingButton("arrow.clockwise", help: "Retry transcription") { stateManager.retryProcessing() }
+                processingButton("xmark", help: "Cancel transcription") { stateManager.cancel() }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(isRecording ? (stateManager.isPaused ? "Recording paused" : "Recording") : "Transcribing")
+    }
+
+    // Explicit white: the default primary color follows the system appearance and vanishes on the dark pill in light mode.
+    private func processingButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+                .frame(width: 22, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 
