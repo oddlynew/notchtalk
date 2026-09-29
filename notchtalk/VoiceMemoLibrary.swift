@@ -39,8 +39,8 @@ final class VoiceMemoLibrary {
         memos.filter { !transcribed.contains($0.id) }
     }
 
-    /// Called by the shared re-transcribe path on success, so a memo is done whether it ran from
-    /// this tab or as a retry in History, and stays done after History trims or clears the entry.
+    /// Called on every success of a re-transcription (this tab, a History retry, the notch's retry),
+    /// so a memo stays done after History trims or clears the entry.
     func rememberTranscribed(_ entryID: UUID) {
         guard let entry = TranscriptionDiagnosticsStore.shared.entries.first(where: { $0.id == entryID }),
               entry.status == .succeeded,
