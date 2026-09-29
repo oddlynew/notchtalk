@@ -63,7 +63,7 @@ final class NotchStateManager {
     private var currentRecordingURL: URL?
     private var currentRecordingDuration: TimeInterval?
     private var recordingAllowsEnter: Bool { (currentRecordingDuration ?? 0) >= 0.5 }
-    private var activeDiagnosticsID: UUID?
+    private(set) var activeDiagnosticsID: UUID?
 
     init() {
         audioRecorder.onAudioLevelUpdate = { [weak self] level in

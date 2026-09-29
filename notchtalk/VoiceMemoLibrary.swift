@@ -32,6 +32,7 @@ final class VoiceMemoLibrary {
     private(set) var memos: [VoiceMemo] = []
     /// False when macOS privacy blocks the folder; Full Disk Access for Notchtalk lifts it.
     private(set) var accessDenied = false
+    @ObservationIgnored private var folderWatch: DispatchSourceFileSystemObject?
     private(set) var transcribed = Set(UserDefaults.standard.stringArray(forKey: VoiceMemoLibrary.transcribedKey) ?? [])
 
     var open: [VoiceMemo] {
@@ -62,6 +63,7 @@ final class VoiceMemoLibrary {
             return
         }
         accessDenied = false
+        watchFolder()
         // Files without a row (unreadable database, or iCloud still syncing it) are listed by date.
         let metadata = Self.readMetadata()
         memos = files.compactMap { url in
@@ -76,6 +78,18 @@ final class VoiceMemoLibrary {
             )
         }
         .sorted { $0.date > $1.date }
+    }
+
+    /// Reloads when iCloud adds or removes a recording while Notchtalk stays in front.
+    private func watchFolder() {
+        guard folderWatch == nil else { return }
+        let fd = Darwin.open(Self.folder.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: .write, queue: .main)
+        source.setEventHandler { [weak self] in MainActor.assumeIsolated { self?.reload() } }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        folderWatch = source
     }
 
     /// Transcribes like ambient recall: a History entry that owns a copy of the audio, then the
@@ -214,8 +228,8 @@ struct VoiceMemosView: View {
                 }
             }
             Spacer()
-            // A pending entry without a running transcription was cut off by a quit; offer it again.
-            if latest?.status == .pending, notch.state == .processing {
+            // A pending entry that is not the running transcription was cut off by a quit; offer it again.
+            if let latest, notch.state == .processing, notch.activeDiagnosticsID == latest.id {
                 ProgressView().controlSize(.small)
             } else {
                 Button("Transcribe") { library.transcribe(memo) }
