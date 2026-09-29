@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     enum SettingsTab: Hashable {
         case history
+        case voiceMemos
         case settings
     }
 
@@ -67,6 +68,7 @@ struct SettingsView: View {
                     .font(.system(size: 17, weight: .semibold))
                     .padding(.bottom, 24).foregroundStyle(.primary)
                 navigationItem("History", icon: "clock.arrow.circlepath", tab: .history)
+                navigationItem("Voice Memos", icon: "waveform.badge.mic", tab: .voiceMemos)
                 navigationItem("Settings", icon: "slider.horizontal.3", tab: .settings)
                 Spacer()
                 Text("Your voice, in words.").font(.caption).foregroundStyle(.secondary)
@@ -75,18 +77,30 @@ struct SettingsView: View {
             Divider()
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(selectedTab == .history ? "Transcripts" : "Settings")
+                    Text(header.title)
                         .font(.system(size: 22, weight: .semibold))
-                    Text(selectedTab == .history ? "Revisit your recordings and their transcripts." : "Recording, transcription and output preferences.")
+                    Text(header.subtitle)
                         .font(.callout).foregroundStyle(.secondary)
                 }.padding(24)
                 Divider()
-                if selectedTab == .history { historyTab } else { settingsTab }
+                switch selectedTab {
+                case .history: historyTab
+                case .voiceMemos: VoiceMemosView()
+                case .settings: settingsTab
+                }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .tint(NotchtalkStyle.accent)
         .frame(width: 940, height: 620)
         .navigationTitle("Notchtalk")
+    }
+
+    private var header: (title: String, subtitle: String) {
+        switch selectedTab {
+        case .history: ("Transcripts", "Revisit your recordings and their transcripts.")
+        case .voiceMemos: ("Voice Memos", "Recordings from the Voice Memos app that Notchtalk has not transcribed yet.")
+        case .settings: ("Settings", "Recording, transcription and output preferences.")
+        }
     }
 
     private func navigationItem(_ title: String, icon: String, tab: SettingsTab) -> some View {
