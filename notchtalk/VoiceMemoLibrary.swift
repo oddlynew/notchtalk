@@ -127,10 +127,12 @@ final class VoiceMemoLibrary {
                 store.markFailed(for: id, message: "Notchtalk was busy with another recording; transcribe the memo again")
                 return
             }
-            // The notch's own missing-key path would leave this entry pending.
-            guard KeychainService.hasAPIKey(for: provider) else {
+            // The notch's own missing-key path would leave this entry pending. It sends with the
+            // provider selected now, which may have changed during the export.
+            let sendingProvider = SettingsManager.shared.transcriptionProvider
+            guard KeychainService.hasAPIKey(for: sendingProvider) else {
                 try? FileManager.default.removeItem(at: copy)
-                store.markFailed(for: id, message: "No API key for \(provider.displayName)")
+                store.markFailed(for: id, message: "No API key for \(sendingProvider.displayName)")
                 return
             }
             guard store.retainAudio(sourceURL: copy, for: id) != nil else {
