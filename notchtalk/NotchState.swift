@@ -571,8 +571,7 @@ final class NotchStateManager {
         diagnosticsID: UUID,
         audioDuration: TimeInterval? = nil,
         reason: String = "Manual re-transcribe requested",
-        allowPaste: Bool = true,
-        onSuccess: (@MainActor () -> Void)? = nil
+        allowPaste: Bool = true
     ) {
         if case .recording = state {
             return
@@ -670,7 +669,6 @@ final class NotchStateManager {
                     speakerRecognitionEnabled: speakerRecognitionEnabled,
                     promptProvided: prompt != nil
                 )
-                onSuccess?()
 
                 if pasteForCurrentTranscription {
                     lastOutputDisposition = .pastedToCursor
