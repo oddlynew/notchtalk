@@ -23,31 +23,29 @@ final class VoiceMemoLibrary {
     static let shared = VoiceMemoLibrary()
 
     /// NOTCHTALK_VOICE_MEMOS_FOLDER points a verification run at a fixture instead of Daniel's memos.
-    static let folder = ProcessInfo.processInfo.environment["NOTCHTALK_VOICE_MEMOS_FOLDER"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+    static let folder = ProcessInfo.processInfo.environment["NOTCHTALK_VOICE_MEMOS_FOLDER"].flatMap { $0.isEmpty ? nil : $0 }.map { URL(fileURLWithPath: $0, isDirectory: true) }
         ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings", isDirectory: true)
     private static let transcribedKey = "transcribedVoiceMemos"
+    private static let labelPrefix = "Voice memo: "
 
     private(set) var memos: [VoiceMemo] = []
     /// False when macOS privacy blocks the folder; Full Disk Access for Notchtalk lifts it.
     private(set) var accessDenied = false
     private(set) var transcribed = Set(UserDefaults.standard.stringArray(forKey: VoiceMemoLibrary.transcribedKey) ?? [])
 
-    /// A memo is done once a History entry for it succeeded, whether from this tab or a retry in
-    /// History. The saved set keeps that after History trims or clears the entry.
     var open: [VoiceMemo] {
-        let succeeded = Self.succeededFilenames()
-        return memos.filter { !transcribed.contains($0.id) && !succeeded.contains($0.id) }
+        memos.filter { !transcribed.contains($0.id) }
     }
 
-    private static func succeededFilenames() -> Set<String> {
-        Set(TranscriptionDiagnosticsStore.shared.entries.filter { $0.status == .succeeded }.map(\.sourceAudioFilename))
-    }
-
-    func rememberTranscribed() {
-        let done = Set(memos.map(\.id)).intersection(Self.succeededFilenames())
-        guard !done.isSubset(of: transcribed) else { return }
-        transcribed.formUnion(done)
+    /// Called by the shared re-transcribe path on success, so a memo is done whether it ran from
+    /// this tab or as a retry in History, and stays done after History trims or clears the entry.
+    func rememberTranscribed(_ entryID: UUID) {
+        guard let entry = TranscriptionDiagnosticsStore.shared.entries.first(where: { $0.id == entryID }),
+              entry.status == .succeeded,
+              entry.label?.hasPrefix(Self.labelPrefix) == true,
+              !transcribed.contains(entry.sourceAudioFilename) else { return }
+        transcribed.insert(entry.sourceAudioFilename)
         UserDefaults.standard.set(Array(transcribed), forKey: Self.transcribedKey)
     }
 
@@ -64,11 +62,11 @@ final class VoiceMemoLibrary {
             return
         }
         accessDenied = false
-        // Without a readable database every file is listed; with it, Recently Deleted drops out.
+        // Files without a row (unreadable database, or iCloud still syncing it) are listed by date.
         let metadata = Self.readMetadata()
         memos = files.compactMap { url in
             let row = metadata?[url.lastPathComponent]
-            if metadata != nil, row == nil { return nil }
+            if row?.deleted == true { return nil }
             let date = row?.date ?? (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
             return VoiceMemo(
                 url: url,
@@ -78,7 +76,6 @@ final class VoiceMemoLibrary {
             )
         }
         .sorted { $0.date > $1.date }
-        rememberTranscribed()
     }
 
     /// Transcribes like ambient recall: a History entry that owns a copy of the audio, then the
@@ -94,7 +91,7 @@ final class VoiceMemoLibrary {
             provider: provider,
             speakerRecognitionEnabled: provider == .elevenLabs
                 && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled,
-            label: "Voice memo: \(memo.title)"
+            label: Self.labelPrefix + memo.title
         )
         // retainAudio moves its source, so it gets a copy (an APFS clone) and Apple's file stays put.
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_voicememo_\(id.uuidString).m4a")
@@ -117,10 +114,10 @@ final class VoiceMemoLibrary {
         )
     }
 
-    /// Title, date and duration per recording filename from Voice Memos' database, without the
-    /// recordings in Recently Deleted. Reads a private copy (with its write-ahead log) so SQLite
+    /// Title, date, duration and whether it sits in Recently Deleted, per recording filename, from
+    /// Voice Memos' database. Reads a private copy (with its write-ahead log) so SQLite
     /// never touches Apple's files; nil when unreadable.
-    private static func readMetadata() -> [String: (title: String?, date: Date, duration: TimeInterval?)]? {
+    private static func readMetadata() -> [String: (title: String?, date: Date, duration: TimeInterval?, deleted: Bool)]? {
         let fileManager = FileManager.default
         let copy = fileManager.temporaryDirectory.appendingPathComponent("notchtalk_voicememos_\(UUID().uuidString)", isDirectory: true)
         defer { try? fileManager.removeItem(at: copy) }
@@ -144,11 +141,11 @@ final class VoiceMemoLibrary {
         var statement: OpaquePointer?
         defer { sqlite3_finalize(statement) }
         // ZENCRYPTEDTITLE holds the plain title the app shows; ZDATE counts seconds since 2001.
-        let sql = "SELECT ZPATH, NULLIF(ZENCRYPTEDTITLE, ''), ZDATE, ZDURATION FROM ZCLOUDRECORDING WHERE ZEVICTIONDATE IS NULL"
+        let sql = "SELECT ZPATH, NULLIF(ZENCRYPTEDTITLE, ''), ZDATE, ZDURATION, ZEVICTIONDATE IS NOT NULL FROM ZCLOUDRECORDING"
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             return nil
         }
-        var rows: [String: (title: String?, date: Date, duration: TimeInterval?)] = [:]
+        var rows: [String: (title: String?, date: Date, duration: TimeInterval?, deleted: Bool)] = [:]
         var result = sqlite3_step(statement)
         while result == SQLITE_ROW {
             defer { result = sqlite3_step(statement) }
@@ -156,9 +153,9 @@ final class VoiceMemoLibrary {
             let title = sqlite3_column_text(statement, 1).map { String(cString: $0) }
             let date = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(statement, 2))
             let duration = sqlite3_column_type(statement, 3) == SQLITE_NULL ? nil : sqlite3_column_double(statement, 3)
-            rows[URL(fileURLWithPath: String(cString: path)).lastPathComponent] = (title, date, duration)
+            rows[URL(fileURLWithPath: String(cString: path)).lastPathComponent] = (title, date, duration, sqlite3_column_int(statement, 4) != 0)
         }
-        // A read that stops early would hide memos; fall back to listing every file instead.
+        // A read that stops early would show deleted memos with wrong titles; list by file instead.
         return result == SQLITE_DONE ? rows : nil
     }
 }
@@ -198,7 +195,6 @@ struct VoiceMemosView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { library.reload() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in library.reload() }
-        .onChange(of: library.open.map(\.id)) { library.rememberTranscribed() }
     }
 
     private func row(_ memo: VoiceMemo) -> some View {
