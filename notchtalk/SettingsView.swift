@@ -85,7 +85,13 @@ struct SettingsView: View {
                 Divider()
                 switch selectedTab {
                 case .history: historyTab
-                case .voiceMemos: VoiceMemosView()
+                case .voiceMemos:
+                    VoiceMemosView { id in
+                        selectedHistoryStatus = nil
+                        searchText = ""
+                        selectedHistoryID = id
+                        selectedTab = .history
+                    }
                 case .settings: settingsTab
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -98,7 +104,7 @@ struct SettingsView: View {
     private var header: (title: String, subtitle: String) {
         switch selectedTab {
         case .history: ("Transcripts", "Revisit your recordings and their transcripts.")
-        case .voiceMemos: ("Voice Memos", "Recordings from the Voice Memos app that Notchtalk has not transcribed yet.")
+        case .voiceMemos: ("Voice Memos", "Recordings from the Voice Memos app. Transcribed ones carry a check and open in History.")
         case .settings: ("Settings", "Recording, transcription and output preferences.")
         }
     }
