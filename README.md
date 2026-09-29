@@ -102,6 +102,12 @@ Use `./script/build_and_run.sh --verify` to launch and verify that the process s
 - On success, if **Auto-paste** is enabled, Notchtalk pastes at your cursor and shows “Pasted!” (your clipboard is restored immediately after).
 - If **Auto-paste** is disabled, Notchtalk copies the transcription to the clipboard and shows “Copied!”.
 
+## Voice Memos
+
+History & settings -> Voice Memos lists the recordings of Apple's Voice Memos app (synced from your iPhone via iCloud) that Notchtalk has not transcribed yet. **Transcribe** sends one with the selected provider; the transcript lands in History and on the clipboard, and the memo leaves the list. Notchtalk only reads Apple's files.
+
+macOS protects that folder, so Notchtalk needs Full Disk Access once: System Settings -> Privacy & Security -> Full Disk Access -> turn on `notchtalk`, then quit and reopen it. The stable signing identity keeps the grant across rebuilds.
+
 ## History & Diagnostics
 
 Settings -> History shows recordings from their start onward, including the stop/cancel trigger, transcript text, and per-run log events such as retries and errors. Exports:
