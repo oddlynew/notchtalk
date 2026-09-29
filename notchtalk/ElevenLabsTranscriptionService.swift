@@ -117,6 +117,7 @@ actor ElevenLabsTranscriptionService {
                         try await Task.sleep(for: delay)
                         continue
                     }
+                    await onLog?("ElevenLabs HTTP \(httpResponse.statusCode) \(requestTiming)", .error)
                     throw error
                 }
 
