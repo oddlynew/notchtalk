@@ -33,7 +33,23 @@ final class VoiceMemoLibrary {
     private(set) var accessDenied = false
     private(set) var transcribed = Set(UserDefaults.standard.stringArray(forKey: VoiceMemoLibrary.transcribedKey) ?? [])
 
-    var open: [VoiceMemo] { memos.filter { !transcribed.contains($0.id) } }
+    /// A memo is done once a History entry for it succeeded, whether from this tab or a retry in
+    /// History. The saved set keeps that after History trims or clears the entry.
+    var open: [VoiceMemo] {
+        let succeeded = Self.succeededFilenames()
+        return memos.filter { !transcribed.contains($0.id) && !succeeded.contains($0.id) }
+    }
+
+    private static func succeededFilenames() -> Set<String> {
+        Set(TranscriptionDiagnosticsStore.shared.entries.filter { $0.status == .succeeded }.map(\.sourceAudioFilename))
+    }
+
+    func rememberTranscribed() {
+        let done = Set(memos.map(\.id)).intersection(Self.succeededFilenames())
+        guard !done.isSubset(of: transcribed) else { return }
+        transcribed.formUnion(done)
+        UserDefaults.standard.set(Array(transcribed), forKey: Self.transcribedKey)
+    }
 
     func reload() {
         let files: [URL]
@@ -62,11 +78,7 @@ final class VoiceMemoLibrary {
             )
         }
         .sorted { $0.date > $1.date }
-    }
-
-    func markTranscribed(_ memo: VoiceMemo) {
-        transcribed.insert(memo.id)
-        UserDefaults.standard.set(Array(transcribed), forKey: Self.transcribedKey)
+        rememberTranscribed()
     }
 
     /// Transcribes like ambient recall: a History entry that owns a copy of the audio, then the
@@ -101,8 +113,7 @@ final class VoiceMemoLibrary {
             diagnosticsID: id,
             audioDuration: memo.duration,
             reason: "Voice memo \(memo.id)",
-            allowPaste: false,
-            onSuccess: { [weak self] in self?.markTranscribed(memo) }
+            allowPaste: false
         )
     }
 
@@ -138,14 +149,17 @@ final class VoiceMemoLibrary {
             return nil
         }
         var rows: [String: (title: String?, date: Date, duration: TimeInterval?)] = [:]
-        while sqlite3_step(statement) == SQLITE_ROW {
+        var result = sqlite3_step(statement)
+        while result == SQLITE_ROW {
+            defer { result = sqlite3_step(statement) }
             guard let path = sqlite3_column_text(statement, 0) else { continue }
             let title = sqlite3_column_text(statement, 1).map { String(cString: $0) }
             let date = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(statement, 2))
             let duration = sqlite3_column_type(statement, 3) == SQLITE_NULL ? nil : sqlite3_column_double(statement, 3)
             rows[URL(fileURLWithPath: String(cString: path)).lastPathComponent] = (title, date, duration)
         }
-        return rows
+        // A read that stops early would hide memos; fall back to listing every file instead.
+        return result == SQLITE_DONE ? rows : nil
     }
 }
 
@@ -170,8 +184,8 @@ struct VoiceMemosView: View {
                 }
             } else if library.open.isEmpty {
                 ContentUnavailableView(
-                    "All voice memos transcribed",
-                    systemImage: "checkmark.circle",
+                    library.memos.isEmpty ? "No voice memos yet" : "All voice memos transcribed",
+                    systemImage: library.memos.isEmpty ? "waveform" : "checkmark.circle",
                     description: Text("New recordings from your iPhone appear here once iCloud has synced them.")
                 )
             } else {
@@ -183,6 +197,8 @@ struct VoiceMemosView: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { library.reload() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in library.reload() }
+        .onChange(of: library.open.map(\.id)) { library.rememberTranscribed() }
     }
 
     private func row(_ memo: VoiceMemo) -> some View {
@@ -202,7 +218,8 @@ struct VoiceMemosView: View {
                 }
             }
             Spacer()
-            if latest?.status == .pending {
+            // A pending entry without a running transcription was cut off by a quit; offer it again.
+            if latest?.status == .pending, notch.state == .processing {
                 ProgressView().controlSize(.small)
             } else {
                 Button("Transcribe") { library.transcribe(memo) }
