@@ -25,6 +25,9 @@ final class NotchStateManager {
 
     // Cleared for every new attempt, including attempts that never reach the provider.
     var latestTranscript: String?
+    /// Only the newest attempt may set latestTranscript; background jobs finish out of order.
+    private var latestAttempt = UUID()
+    private var recordingAttempt = UUID()
     var isHoldRecording = false
     var noSendForRecording = false
     private(set) var pendingSubmit = false
@@ -108,6 +111,8 @@ final class NotchStateManager {
         isPaused = false
         processingTask?.cancel()
         latestTranscript = nil
+        latestAttempt = UUID()
+        recordingAttempt = latestAttempt
         let provider = SettingsManager.shared.transcriptionProvider
         guard provider.isReady else {
             state = .error(provider.notReadyMessage)
@@ -333,7 +338,9 @@ final class NotchStateManager {
 
                 guard !Task.isCancelled else { return }
 
-                latestTranscript = transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : transcription
+                if latestAttempt == recordingAttempt {
+                    latestTranscript = transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : transcription
+                }
                 diagnosticsStore.markSucceeded(
                     for: diagnosticsID,
                     transcriptText: transcription,
@@ -446,7 +453,9 @@ final class NotchStateManager {
 
                 guard !Task.isCancelled else { return }
 
-                latestTranscript = transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : transcription
+                if latestAttempt == recordingAttempt {
+                    latestTranscript = transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : transcription
+                }
                 diagnosticsStore.markSucceeded(
                     for: diagnosticsID,
                     transcriptText: transcription,
@@ -637,6 +646,8 @@ final class NotchStateManager {
         backgroundJobs.insert(diagnosticsID)
         // A new attempt retires the previous transcript, as every attempt does (README, Menu and shortcut).
         latestTranscript = nil
+        let attempt = UUID()
+        latestAttempt = attempt
         diagnosticsStore.prepareForManualRetry(for: diagnosticsID, reason: reason)
         diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
 
@@ -665,7 +676,7 @@ final class NotchStateManager {
                     promptProvided: prompt != nil
                 )
                 VoiceMemoLibrary.shared.rememberTranscribed(diagnosticsID)
-                if !transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if latestAttempt == attempt, !transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     latestTranscript = transcription
                 }
                 // A paste during a dictation would land in the text the user is dictating into.
