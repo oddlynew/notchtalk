@@ -162,6 +162,9 @@ actor LocalTranscriptionService {
     let model: LocalModel
     private var server: Process?
     private var ready: Task<URL, Error>?
+    // A provider switch mid-transcription stops the server once the running uploads finish.
+    private var inFlight = 0
+    private var stopWhenIdle = false
 
     private init(_ model: LocalModel) {
         self.model = model
@@ -169,6 +172,7 @@ actor LocalTranscriptionService {
 
     /// Starts the model server so the first transcription does not wait for it.
     func prewarm() async {
+        stopWhenIdle = false
         _ = try? await baseURL()
     }
 
@@ -184,7 +188,7 @@ actor LocalTranscriptionService {
     }
 
     func shutdown() {
-        stop()
+        if inFlight > 0 { stopWhenIdle = true } else { stop() }
     }
 
     func transcribe(audioURL: URL, onLog: LogHandler? = nil) async throws -> String {
@@ -193,6 +197,11 @@ actor LocalTranscriptionService {
         // The models read 16 kHz mono; recordings and memos are AAC.
         try await Self.run("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", audioURL.path, wavURL.path])
 
+        inFlight += 1
+        defer {
+            inFlight -= 1
+            if inFlight == 0, stopWhenIdle { stopWhenIdle = false; stop() }
+        }
         let base = try await baseURL()
         var request = URLRequest(url: base, timeoutInterval: 600)
         request.httpMethod = "POST"
@@ -227,11 +236,13 @@ actor LocalTranscriptionService {
     private func launch() async throws -> URL {
         guard model.isInstalled else { throw TranscriptionError.apiError("\(model.name) is not installed") }
         let port = Int.random(in: 20_000...60_000)
+        // Another local service may hold the port; only our server echoes this token.
+        let token = UUID().uuidString
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         // The wrapper stops the server when Notchtalk exits, also after a crash.
         process.arguments = ["-c", """
-            "$ROOT/venv/bin/python" "$ROOT/server.py" \(port) & child=$!
+            "$ROOT/venv/bin/python" "$ROOT/server.py" \(port) \(token) & child=$!
             trap 'kill $child 2>/dev/null' EXIT
             while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null && kill -0 $child 2>/dev/null; do sleep 2; done
             """]
@@ -249,8 +260,7 @@ actor LocalTranscriptionService {
         // A cold start loads Python and the model in about 10 s.
         for _ in 0..<240 {
             guard process.isRunning else { break }
-            if let (_, response) = try? await URLSession.shared.data(from: base),
-               (response as? HTTPURLResponse)?.statusCode == 200 {
+            if let (data, _) = try? await URLSession.shared.data(from: base), data == Data(token.utf8) {
                 return base
             }
             try await Task.sleep(for: .milliseconds(500))
@@ -309,7 +319,7 @@ actor LocalTranscriptionService {
     }
 
     /// Serves the loader's `transcribe`: `POST /` (a 16 kHz wav body) answers `{"text"}`, `GET /`
-    /// answers 200. One request decodes at a time.
+    /// answers the launch token. One request decodes at a time.
     private static let serverScript = """
         import json, sys, tempfile, threading
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -318,7 +328,11 @@ actor LocalTranscriptionService {
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                self.reply(200, {"ok": True})
+                data = sys.argv[2].encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
 
             def do_POST(self):
                 body = self.rfile.read(int(self.headers["Content-Length"]))
@@ -384,6 +398,8 @@ actor LocalTranscriptionService {
                 do {
                     try Task.checkCancellation()
                     try process.run()
+                    // A cancel between the check and run() found nothing to terminate.
+                    if Task.isCancelled { process.terminate() }
                 } catch { continuation.resume(throwing: error) }
             }
         } onCancel: {
