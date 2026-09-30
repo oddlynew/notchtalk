@@ -770,6 +770,7 @@ struct SettingsView: View {
                     .font(.caption)
             }
         }
+        EmptyView().onAppear { phononInstaller.refresh() }
     }
 
     @ViewBuilder

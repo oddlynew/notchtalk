@@ -53,7 +53,7 @@ There is a provider picker, but no model picker. The goal is “works well by de
      - If needed, change the **Bundle Identifier** to something unique.
 4. Select the `notchtalk` scheme and run.
 5. When prompted, grant Microphone permission. If the hotkey does not work, grant Accessibility permission.
-6. Open **Settings...** from the menu bar icon, choose a provider, and paste its API key.
+6. Open **Settings...** from the menu bar icon, choose a provider, and paste its API key. For Phonon-2, click **Download and install** instead.
 
 ## Build A Release And Install To /Applications
 

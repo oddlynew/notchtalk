@@ -24,6 +24,12 @@ final class PhononInstaller {
 
     var isInstalled: Bool { state == .installed }
 
+    /// Picks up a folder deleted or installed outside the app.
+    func refresh() {
+        if case .installing = state { return }
+        state = PhononTranscriptionService.isInstalled ? .installed : .notInstalled
+    }
+
     func install() {
         if case .installing = state { return }
         state = .installing("Starting")
@@ -83,15 +89,23 @@ actor PhononTranscriptionService {
         let base = try await baseURL()
         defer { scheduleIdleStop() }
         let boundary = UUID().uuidString
-        var body = Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n".utf8)
-        body.append(try Data(contentsOf: wavURL))
-        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        // The body is streamed from a file: an hour of audio is about 115 MB.
+        let bodyURL = wavURL.appendingPathExtension("body")
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
+        FileManager.default.createFile(atPath: bodyURL.path, contents: Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n".utf8))
+        let body = try FileHandle(forWritingTo: bodyURL)
+        let wav = try FileHandle(forReadingFrom: wavURL)
+        defer { try? wav.close() }
+        try body.seekToEnd()
+        while let chunk = try wav.read(upToCount: 1 << 20), !chunk.isEmpty { try body.write(contentsOf: chunk) }
+        try body.write(contentsOf: Data("\r\n--\(boundary)--\r\n".utf8))
+        try body.close()
 
         var request = URLRequest(url: base.appending(path: "v1/audio/transcriptions"), timeoutInterval: 600)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         let started = Date()
-        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: bodyURL)
         guard let http = response as? HTTPURLResponse else { throw TranscriptionError.invalidResponse }
 
         let reply = try? JSONDecoder().decode(Reply.self, from: data)
@@ -106,7 +120,8 @@ actor PhononTranscriptionService {
 
     private func baseURL() async throws -> URL {
         idleStop?.cancel()
-        if let ready, server?.isRunning == true, let url = try? await ready.value { return url }
+        // A start in flight is awaited, not replaced: its process may not exist yet.
+        if let ready, let url = try? await ready.value, server?.isRunning == true { return url }
         stop()
         let task = Task { try await launch() }
         ready = task
@@ -180,8 +195,8 @@ actor PhononTranscriptionService {
         ]
     }
 
-    /// Each `echo` line becomes the step shown in Settings. Versions are pinned so a reinstall
-    /// gets the same runtime.
+    /// Each `echo` line becomes the step shown in Settings. Versions are pinned to the set tested
+    /// with Phonon-2 so a reinstall gets the same runtime.
     private static let installScript = """
         set -euo pipefail
         [ "$(uname -m)" = arm64 ] || { echo "Phonon-2 needs a Mac with Apple silicon" >&2; exit 1; }
@@ -195,7 +210,8 @@ actor PhononTranscriptionService {
         bin/uv venv -q --allow-existing --managed-python --python 3.12 venv
         echo "Installing the speech engine"
         bin/uv pip install -q --python venv/bin/python \
-          fermion-research==0.2.3 mlx mlx-audio mlx-lm soundfile scipy zstandard
+          fermion-research==0.2.3 mlx==0.32.3 mlx-audio==0.5.7 mlx-lm==0.31.3 \
+          soundfile==0.14.0 scipy==1.18.1 zstandard==0.25.0
         echo "Downloading Phonon-2 (164 MB)"
         venv/bin/fermion transcribe --download-only --model \(model) placeholder.wav > /dev/null
         bin/uv cache clean -q
