@@ -10,6 +10,7 @@ enum TranscriptionProvider: String, CaseIterable, Codable, Identifiable, Sendabl
     case elevenLabs
     // The raw value is from the first test build; saved settings and history already hold it.
     case parakeet = "phonon"
+    case phonon2 = "phonon-2"
 
     var id: String { rawValue }
 
@@ -19,8 +20,8 @@ enum TranscriptionProvider: String, CaseIterable, Codable, Identifiable, Sendabl
             return "OpenAI"
         case .elevenLabs:
             return "ElevenLabs"
-        case .parakeet:
-            return "Parakeet"
+        case .parakeet, .phonon2:
+            return localModel!.name
         }
     }
 
@@ -30,17 +31,26 @@ enum TranscriptionProvider: String, CaseIterable, Codable, Identifiable, Sendabl
             return "openai-api-key"
         case .elevenLabs:
             return "elevenlabs-api-key"
-        case .parakeet:
-            return "parakeet-unused"
+        case .parakeet, .phonon2:
+            return "\(rawValue)-unused"
         }
     }
 
-    /// A recording can go out: the provider's key is saved, or Parakeet is installed on this Mac.
+    /// The model that transcribes on this Mac, or nil for a cloud provider.
+    nonisolated var localModel: LocalModel? {
+        switch self {
+        case .openAI, .elevenLabs: nil
+        case .parakeet: .parakeet
+        case .phonon2: .phonon2
+        }
+    }
+
+    /// A recording can go out: the provider's key is saved, or its model is installed on this Mac.
     nonisolated var isReady: Bool {
-        self == .parakeet ? ParakeetTranscriptionService.isInstalled : KeychainService.hasAPIKey(for: self)
+        localModel?.isInstalled ?? KeychainService.hasAPIKey(for: self)
     }
 
     nonisolated var notReadyMessage: String {
-        self == .parakeet ? "Install Parakeet" : "No API key"
+        localModel.map { "Install \($0.name)" } ?? "No API key"
     }
 }

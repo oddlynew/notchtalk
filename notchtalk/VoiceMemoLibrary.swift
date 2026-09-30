@@ -135,7 +135,7 @@ final class VoiceMemoLibrary {
             }
             // The notch's own missing-key path would leave this entry pending.
             guard provider.isReady else {
-                return fail(provider == .parakeet ? provider.notReadyMessage : "No API key for \(provider.displayName)")
+                return fail(provider.localModel != nil ? provider.notReadyMessage : "No API key for \(provider.displayName)")
             }
             guard store.retainAudio(sourceURL: copy, for: id) != nil else {
                 return fail("Could not keep a copy of the voice memo")

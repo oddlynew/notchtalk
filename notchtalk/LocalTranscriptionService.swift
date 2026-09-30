@@ -1,18 +1,108 @@
 //
-//  ParakeetTranscriptionService.swift
+//  LocalTranscriptionService.swift
 //  notchtalk
 //
 
 import Foundation
 import Observation
 
-/// NVIDIA Parakeet-TDT 0.6B v3 (CC BY 4.0, 25 European languages) transcribes on this Mac through
-/// mlx-audio. Installing downloads uv, a Python runtime with mlx-audio and the 2.3 GB model into
-/// Application Support.
+/// A speech model that transcribes on this Mac. Installing downloads uv, a Python runtime, the
+/// model's engine and the model into its own folder in Application Support.
+enum LocalModel: String, Sendable {
+    /// NVIDIA Parakeet-TDT 0.6B v3 (CC BY 4.0, 25 European languages) through mlx-audio.
+    case parakeet
+    /// Phonon-2 by Fermion Research (CC BY 4.0), a 2-bit build of Parakeet: small and fast, but it
+    /// garbles German.
+    case phonon2
+
+    var name: String {
+        switch self {
+        case .parakeet: "Parakeet"
+        case .phonon2: "Phonon-2"
+        }
+    }
+
+    // Full precision on purpose: the 2-bit Phonon-2 build of this model garbled German.
+    private static let parakeetRepo = "mlx-community/parakeet-tdt-0.6b-v3"
+    private static let parakeetRevision = "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15"
+    private static let phononRepo = "FermionResearch/Phonon-2"
+
+    /// The direct dependencies, pinned to the versions tested with the model.
+    fileprivate var packages: String {
+        switch self {
+        case .parakeet:
+            "mlx==0.32.3 mlx-audio==0.5.7"
+        case .phonon2:
+            "fermion-research==0.2.3 mlx==0.32.3 mlx-audio==0.5.7 mlx-lm==0.31.3 soundfile==0.14.0 scipy==1.18.1 zstandard==0.25.0"
+        }
+    }
+
+    fileprivate var download: String {
+        switch self {
+        case .parakeet:
+            """
+            echo "Downloading Parakeet (2.3 GB)"
+            venv/bin/python -c 'import huggingface_hub, sys; huggingface_hub.snapshot_download(sys.argv[1], revision=sys.argv[2])' \
+              \(Self.parakeetRepo) \(Self.parakeetRevision) > /dev/null
+            """
+        case .phonon2:
+            """
+            echo "Downloading Phonon-2 (164 MB)"
+            venv/bin/fermion transcribe --download-only --model \(Self.phononRepo) placeholder.wav > /dev/null
+            """
+        }
+    }
+
+    /// Python that loads the model once and defines `transcribe(path) -> str`.
+    fileprivate var loader: String {
+        switch self {
+        case .parakeet:
+            """
+            from mlx_audio.stt.utils import load_model
+            model = load_model("\(Self.parakeetRepo)", revision="\(Self.parakeetRevision)")
+            def transcribe(path): return model.generate(path).text
+            """
+        case .phonon2:
+            // fermion 0.2.3 has no public speech API; these are the calls `fermion transcribe` makes.
+            """
+            from fermion._speech import backends, fetch
+            from fermion.transcribe import _resolve
+            repo, key, pin, _ = _resolve("\(Self.phononRepo)")
+            engine = backends.resolve("notchtalk")
+            speech = backends.load(engine, fetch.ensure(repo, key, pin), profile=key, backend=pin["backend"], quiet=True)
+            def transcribe(path): return speech.transcribe_detailed(path).triple()[0]
+            """
+        }
+    }
+
+    @MainActor var installer: LocalModelInstaller {
+        switch self {
+        case .parakeet: .parakeet
+        case .phonon2: .phonon2
+        }
+    }
+
+    var service: LocalTranscriptionService {
+        switch self {
+        case .parakeet: .parakeet
+        case .phonon2: .phonon2
+        }
+    }
+
+    nonisolated var root: URL {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: self == .parakeet ? "notchtalk/parakeet" : "notchtalk/phonon", directoryHint: .isDirectory)
+    }
+
+    nonisolated var isInstalled: Bool { FileManager.default.fileExists(atPath: root.appending(path: "installed").path) }
+}
+
 @MainActor
 @Observable
-final class ParakeetInstaller {
-    static let shared = ParakeetInstaller()
+final class LocalModelInstaller {
+    static let parakeet = LocalModelInstaller(.parakeet)
+    static let phonon2 = LocalModelInstaller(.phonon2)
 
     enum State: Equatable {
         case notInstalled
@@ -21,14 +111,20 @@ final class ParakeetInstaller {
         case failed(String)
     }
 
-    private(set) var state: State = ParakeetTranscriptionService.isInstalled ? .installed : .notInstalled
+    let model: LocalModel
+    private(set) var state: State
+
+    private init(_ model: LocalModel) {
+        self.model = model
+        state = model.isInstalled ? .installed : .notInstalled
+    }
 
     var isInstalled: Bool { state == .installed }
 
     /// Picks up a folder deleted or installed outside the app.
     func refresh() {
         if case .installing = state { return }
-        state = ParakeetTranscriptionService.isInstalled ? .installed : .notInstalled
+        state = model.isInstalled ? .installed : .notInstalled
     }
 
     func install() {
@@ -36,14 +132,14 @@ final class ParakeetInstaller {
         state = .installing("Starting")
         Task {
             do {
-                try await ParakeetTranscriptionService.install { step in
+                try await model.service.install { [model] step in
                     Task { @MainActor in
-                        let installer = ParakeetInstaller.shared
+                        let installer = model.installer
                         if case .installing = installer.state { installer.state = .installing(step) }
                     }
                 }
                 state = .installed
-                await ParakeetTranscriptionService.shared.prewarm()
+                LocalTranscriptionService.follow(SettingsManager.shared.transcriptionProvider)
             } catch {
                 state = .failed(error.localizedDescription)
             }
@@ -51,20 +147,11 @@ final class ParakeetInstaller {
     }
 }
 
-actor ParakeetTranscriptionService {
+actor LocalTranscriptionService {
     typealias LogHandler = @MainActor @Sendable (_ message: String, _ level: TranscriptionDiagnosticsEntry.LogLevel) async -> Void
 
-    static let shared = ParakeetTranscriptionService()
-
-    nonisolated static let root = FileManager.default
-        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appending(path: "notchtalk/parakeet", directoryHint: .isDirectory)
-    private nonisolated static let marker = root.appending(path: "installed")
-    nonisolated static var isInstalled: Bool { FileManager.default.fileExists(atPath: marker.path) }
-
-    // Full precision on purpose: the 2-bit Phonon-2 build of this model garbled German.
-    private static let model = "mlx-community/parakeet-tdt-0.6b-v3"
-    private static let revision = "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15"
+    static let parakeet = LocalTranscriptionService(.parakeet)
+    static let phonon2 = LocalTranscriptionService(.phonon2)
 
     struct Reply: Decodable, Sendable {
         struct Failure: Decodable, Sendable { let message: String }
@@ -72,20 +159,27 @@ actor ParakeetTranscriptionService {
         let error: Failure?
     }
 
+    let model: LocalModel
     private var server: Process?
     private var ready: Task<URL, Error>?
+
+    private init(_ model: LocalModel) {
+        self.model = model
+    }
 
     /// Starts the model server so the first transcription does not wait for it.
     func prewarm() async {
         _ = try? await baseURL()
     }
 
-    /// Keeps the server warm while Parakeet is the provider and stops it otherwise.
-    // ponytail: the warm server holds about 3 GB for as long as Parakeet is selected; an idle
+    /// Keeps the selected model's server warm and stops the other one.
+    // ponytail: the warm server holds up to 3 GB for as long as its model is selected; an idle
     // timeout would bring back the 10 s cold start on the next short recording.
     nonisolated static func follow(_ provider: TranscriptionProvider) {
         Task {
-            if provider == .parakeet, isInstalled { await shared.prewarm() } else { await shared.shutdown() }
+            for model in [LocalModel.parakeet, .phonon2] {
+                if provider.localModel == model, model.isInstalled { await model.service.prewarm() } else { await model.service.shutdown() }
+            }
         }
     }
 
@@ -94,9 +188,9 @@ actor ParakeetTranscriptionService {
     }
 
     func transcribe(audioURL: URL, onLog: LogHandler? = nil) async throws -> String {
-        let wavURL = FileManager.default.temporaryDirectory.appending(path: "notchtalk_parakeet_\(UUID().uuidString).wav")
+        let wavURL = FileManager.default.temporaryDirectory.appending(path: "notchtalk_local_\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: wavURL) }
-        // The model reads 16 kHz mono; recordings and memos are AAC.
+        // The models read 16 kHz mono; recordings and memos are AAC.
         try await Self.run("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", audioURL.path, wavURL.path])
 
         let base = try await baseURL()
@@ -111,7 +205,7 @@ actor ParakeetTranscriptionService {
         guard http.statusCode == 200, let text = reply?.text else {
             throw reply?.error.map { TranscriptionError.apiError($0.message) } ?? TranscriptionError.httpError(http.statusCode)
         }
-        await onLog?(String(format: "Parakeet transcribed on this Mac in %.1f s", Date().timeIntervalSince(started)), .info)
+        await onLog?(String(format: "\(model.name) transcribed on this Mac in %.1f s", Date().timeIntervalSince(started)), .info)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw TranscriptionError.emptyTranscript }
         return trimmed
@@ -131,7 +225,7 @@ actor ParakeetTranscriptionService {
     }
 
     private func launch() async throws -> URL {
-        guard Self.isInstalled else { throw TranscriptionError.apiError("Parakeet is not installed") }
+        guard model.isInstalled else { throw TranscriptionError.apiError("\(model.name) is not installed") }
         let port = Int.random(in: 20_000...60_000)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -141,9 +235,9 @@ actor ParakeetTranscriptionService {
             trap 'kill $child 2>/dev/null' EXIT
             while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null && kill -0 $child 2>/dev/null; do sleep 2; done
             """]
-        process.environment = Self.environment.merging(["HF_HUB_OFFLINE": "1"]) { $1 }
-        try Data(Self.serverScript.utf8).write(to: Self.root.appending(path: "server.py"))
-        let log = Self.root.appending(path: "server.log")
+        process.environment = environment.merging(["HF_HUB_OFFLINE": "1"]) { $1 }
+        try Data((model.loader + "\n" + Self.serverScript).utf8).write(to: model.root.appending(path: "server.py"))
+        let log = model.root.appending(path: "server.log")
         FileManager.default.createFile(atPath: log.path, contents: nil)
         let handle = try FileHandle(forWritingTo: log)
         process.standardOutput = handle
@@ -164,7 +258,7 @@ actor ParakeetTranscriptionService {
         // `ready` stays on this failed start so concurrent waiters can tell it apart from a retry.
         process.terminate()
         if server === process { server = nil }
-        throw TranscriptionError.apiError("Parakeet did not start, see \(log.path)")
+        throw TranscriptionError.apiError("\(model.name) did not start, see \(log.path)")
     }
 
     private func stop() {
@@ -175,28 +269,29 @@ actor ParakeetTranscriptionService {
 
     // MARK: Install
 
-    private nonisolated static var environment: [String: String] {
-        let root = root.path
+    private nonisolated var environment: [String: String] {
+        let root = model.root.path
         return [
             "ROOT": root,
             "HOME": NSHomeDirectory(),
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "UV_CACHE_DIR": root + "/uv-cache",
             "UV_PYTHON_INSTALL_DIR": root + "/python",
+            "FERMION_CACHE_DIR": root + "/models",
             "HF_HOME": root + "/hf",
             "HF_HUB_DISABLE_TELEMETRY": "1",
         ]
     }
 
-    /// Each `echo` line becomes the step shown in Settings. The direct dependencies and the model
-    /// revision are pinned to the versions tested here.
-    private static let installScript = """
+    /// Each `echo` line becomes the step shown in Settings.
+    private nonisolated var installScript: String {
+        """
         set -euo pipefail
         # Quitting Notchtalk mid-install stops the download too.
         ( trap '' TERM; while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do sleep 2; done
           pkill -TERM -P $$; kill -TERM $$ ) & watcher=$!
         trap 'kill -9 $watcher 2>/dev/null' EXIT
-        [ "$(uname -m)" = arm64 ] || { echo "Parakeet needs a Mac with Apple silicon" >&2; exit 1; }
+        [ "$(uname -m)" = arm64 ] || { echo "\(model.name) needs a Mac with Apple silicon" >&2; exit 1; }
         mkdir -p "$ROOT/bin" && cd "$ROOT"
         if [ ! -x bin/uv ]; then
           echo "Downloading uv"
@@ -206,22 +301,19 @@ actor ParakeetTranscriptionService {
         echo "Installing Python"
         bin/uv venv -q --allow-existing --managed-python --python 3.12 venv
         echo "Installing the speech engine"
-        bin/uv pip install -q --python venv/bin/python mlx==0.32.3 mlx-audio==0.5.7
-        echo "Downloading Parakeet (2.3 GB)"
-        venv/bin/python -c 'import huggingface_hub, sys; huggingface_hub.snapshot_download(sys.argv[1], revision=sys.argv[2])' \
-          \(model) \(revision) > /dev/null
+        bin/uv pip install -q --python venv/bin/python \(model.packages)
+        \(model.download)
         bin/uv cache clean -q
         touch installed
         """
+    }
 
-    /// Loads the model once and answers `POST /` (a 16 kHz wav body) with `{"text"}` and `GET /`
-    /// with 200. One request decodes at a time.
+    /// Serves the loader's `transcribe`: `POST /` (a 16 kHz wav body) answers `{"text"}`, `GET /`
+    /// answers 200. One request decodes at a time.
     private static let serverScript = """
         import json, sys, tempfile, threading
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-        from mlx_audio.stt.utils import load_model
 
-        model = load_model("\(model)", revision="\(revision)")
         lock = threading.Lock()
 
         class Handler(BaseHTTPRequestHandler):
@@ -234,7 +326,7 @@ actor ParakeetTranscriptionService {
                     with tempfile.NamedTemporaryFile(suffix=".wav") as f, lock:
                         f.write(body)
                         f.flush()
-                        self.reply(200, {"text": model.generate(f.name).text})
+                        self.reply(200, {"text": transcribe(f.name)})
                 except Exception as error:
                     self.reply(500, {"error": {"message": str(error)}})
 
@@ -252,9 +344,9 @@ actor ParakeetTranscriptionService {
         ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
         """
 
-    nonisolated static func install(onStep: @escaping @Sendable (String) -> Void) async throws {
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try await run("/bin/bash", ["-c", installScript], environment: environment, onLine: onStep)
+    nonisolated func install(onStep: @escaping @Sendable (String) -> Void) async throws {
+        try FileManager.default.createDirectory(at: model.root, withIntermediateDirectories: true)
+        try await Self.run("/bin/bash", ["-c", installScript], environment: environment, onLine: onStep)
     }
 
     /// Runs a tool to completion; a failure carries the last line it wrote to stderr.
