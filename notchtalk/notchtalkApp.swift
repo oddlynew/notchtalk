@@ -91,6 +91,7 @@ final class AppController {
         }
         HotKeyManager.shared.onCancel = { [weak self] in
             guard let self else { return }
+            if self.stateManager.pasteGesturePending { self.stateManager.abandonFinishGesture() }
             switch self.stateManager.state {
             case .recording, .processing:
                 self.stateManager.cancel(reason: "Escape key")

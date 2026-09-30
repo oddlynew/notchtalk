@@ -224,7 +224,9 @@ final class NotchStateManager {
     }
 
     func releaseFinishGesture() {
-        if pasteGestureTask != nil { return finishPasteGesture(submit: false) }
+        if pasteGestureTask != nil {
+            return finishPasteGesture(submit: finishDeadline.map { ProcessInfo.processInfo.systemUptime >= $0 } ?? false)
+        }
         guard finishProgress != nil, state == .recording else { return }
         let shouldSend = finishDeadline.map { ProcessInfo.processInfo.systemUptime >= $0 } ?? false
         finishTask?.cancel()
@@ -243,6 +245,7 @@ final class NotchStateManager {
         activeDiagnosticsID = nil
         reset()
         let delay = SettingsManager.shared.finishHoldDelay
+        finishDeadline = ProcessInfo.processInfo.systemUptime + delay
         pasteGestureTask = Task {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
@@ -399,6 +402,9 @@ final class NotchStateManager {
         guard let url = currentRecordingURL else {
             return
         }
+        latestTranscript = nil
+        latestAttempt = UUID()
+        recordingAttempt = latestAttempt
         guard FileManager.default.fileExists(atPath: url.path) else {
             state = .error("Missing audio")
             SoundManager.shared.playErrorSound()
@@ -421,9 +427,6 @@ final class NotchStateManager {
         totalRetries = 0
         processingControlsAvailable = false
         diagnosticsStore.log("User requested retry; cancelling in-flight request", level: .warning, for: diagnosticsID)
-        latestTranscript = nil
-        latestAttempt = UUID()
-        recordingAttempt = latestAttempt
         let provider = SettingsManager.shared.transcriptionProvider
         let speakerRecognitionEnabled = provider == .elevenLabs
             && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled

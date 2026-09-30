@@ -82,19 +82,20 @@ enum ClipboardService {
     /// `onlyIf` is checked when the paste's turn comes; false copies the text instead.
     static func pastePreservingClipboard(_ text: String, submit: Bool = false, onlyIf: @escaping @MainActor () -> Bool = { true }) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // The app in front when the paste was asked for, not when its turn comes.
+        let targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         afterPendingPaste(holding: 0.25) {
             guard onlyIf() else {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
                 return
             }
-            paste(text, submit: submit)
+            paste(text, submit: submit, targetPID: targetPID)
         }
     }
 
     @MainActor
-    private static func paste(_ text: String, submit: Bool) {
-        let targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    private static func paste(_ text: String, submit: Bool, targetPID: pid_t?) {
         let pasteboard = NSPasteboard.general
         let snapshot = PasteboardSnapshot.capture(from: pasteboard)
         let token = UUID().uuidString
