@@ -52,10 +52,25 @@ enum ClipboardService {
         }
     }
 
+    /// One paste cycle (write, Cmd+V, restore) at a time: a background transcript written during a
+    /// dictation's cycle would be pasted in its place. Later writes wait until the cycle is over.
+    @MainActor private static var busyUntil: TimeInterval = 0
+
+    @MainActor
+    private static func afterPendingPaste(holding: TimeInterval, _ work: @escaping @MainActor () -> Void) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let start = max(now, busyUntil)
+        busyUntil = start + holding
+        guard start > now else { return work() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (start - now)) { MainActor.assumeIsolated { work() } }
+    }
+
     @MainActor
     static func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        afterPendingPaste(holding: 0) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
     }
 
     @MainActor
@@ -66,6 +81,11 @@ enum ClipboardService {
     @MainActor
     static func pastePreservingClipboard(_ text: String, submit: Bool = false) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        afterPendingPaste(holding: 0.25) { paste(text, submit: submit) }
+    }
+
+    @MainActor
+    private static func paste(_ text: String, submit: Bool) {
         let targetPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
         let pasteboard = NSPasteboard.general
         let snapshot = PasteboardSnapshot.capture(from: pasteboard)

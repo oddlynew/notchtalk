@@ -634,6 +634,8 @@ final class NotchStateManager {
             ? SettingsManager.shared.transcriptionPrompt
             : nil
         backgroundJobs.insert(diagnosticsID)
+        // A new attempt retires the previous transcript, as every attempt does (README, Menu and shortcut).
+        latestTranscript = nil
         diagnosticsStore.prepareForManualRetry(for: diagnosticsID, reason: reason)
         diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
 

@@ -95,8 +95,11 @@ final class VoiceMemoLibrary {
     /// shared background re-transcribe path, several at once. The transcript lands in History and on the clipboard, never pasted.
     func transcribe(_ memo: VoiceMemo) {
         let notch = NotchStateManager.shared
-        guard !preparing.contains(memo.id) else { return }
         let store = TranscriptionDiagnosticsStore.shared
+        // Reserved from the first click until its transcription finishes, so a second click never uploads it twice.
+        guard !preparing.contains(memo.id),
+              !store.entries.contains(where: { $0.sourceAudioFilename == memo.id && notch.backgroundJobs.contains($0.id) })
+        else { return }
         // retainAudio moves its source, so it gets a copy (an APFS clone) and Apple's file stays put.
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_voicememo_\(UUID().uuidString).m4a")
         preparing.insert(memo.id)
