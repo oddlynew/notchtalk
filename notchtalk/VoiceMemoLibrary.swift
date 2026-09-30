@@ -92,11 +92,14 @@ final class VoiceMemoLibrary {
     }
 
     /// Transcribes like ambient recall: a History entry that owns a copy of the audio, then the
-    /// shared re-transcribe path. The transcript lands in History and on the clipboard, never pasted.
+    /// shared background re-transcribe path, several at once. The transcript lands in History and on the clipboard, never pasted.
     func transcribe(_ memo: VoiceMemo) {
         let notch = NotchStateManager.shared
-        guard notch.state != .recording, notch.state != .processing, preparing.isEmpty else { return }
         let store = TranscriptionDiagnosticsStore.shared
+        // Reserved from the first click until its transcription finishes, so a second click never uploads it twice.
+        guard !preparing.contains(memo.id),
+              !store.entries.contains(where: { $0.sourceAudioFilename == memo.id && notch.backgroundJobs.contains($0.id) })
+        else { return }
         // retainAudio moves its source, so it gets a copy (an APFS clone) and Apple's file stays put.
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_voicememo_\(UUID().uuidString).m4a")
         preparing.insert(memo.id)
@@ -129,9 +132,6 @@ final class VoiceMemoLibrary {
             }
             if let readError {
                 return fail("Could not read the voice memo: \(readError.localizedDescription)")
-            }
-            guard notch.state != .recording, notch.state != .processing else {
-                return fail("Notchtalk was busy with another recording; transcribe the memo again")
             }
             // The notch's own missing-key path would leave this entry pending.
             guard provider.isReady else {
@@ -290,7 +290,7 @@ struct VoiceMemosView: View {
             }
             Spacer()
             // A pending entry that is not the running transcription was cut off by a quit; offer it again.
-            if library.preparing.contains(memo.id) || (latest != nil && notch.state == .processing && notch.activeDiagnosticsID == latest?.id) {
+            if library.preparing.contains(memo.id) || (latest.map { notch.backgroundJobs.contains($0.id) } ?? false) {
                 ProgressView().controlSize(.small)
             } else if done {
                 // History keeps a limited number of entries; an older memo stays checked without one.
@@ -299,7 +299,7 @@ struct VoiceMemosView: View {
                 }
             } else {
                 Button("Transcribe") { library.transcribe(memo) }
-                    .disabled(notch.state == .recording || notch.state == .processing || !library.preparing.isEmpty || !SettingsManager.shared.hasAPIKey)
+                    .disabled(!SettingsManager.shared.hasAPIKey)
             }
         }
         .padding(.vertical, 4)

@@ -111,6 +111,10 @@ final class HotKeyManager: @unchecked Sendable {
         if keyCode == 53 && (type == .keyDown || type == .keyUp) {
             var captured = escapeGesture.capturesEvents
             if type == .keyDown {
+                // Escape also calls off a double-tap paste that is still waiting for its release.
+                MainActor.assumeIsolated {
+                    if NotchStateManager.shared.pasteGesturePending { NotchStateManager.shared.abandonFinishGesture() }
+                }
                 let recording = MainActor.assumeIsolated { NotchStateManager.shared.state == .recording }
                 if escapeGesture.press(recording: recording) {
                     MainActor.assumeIsolated { onEscapeHeld?() }
