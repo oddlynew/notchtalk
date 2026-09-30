@@ -162,6 +162,7 @@ actor LocalTranscriptionService {
     let model: LocalModel
     private var server: Process?
     private var ready: Task<URL, Error>?
+    private var token = ""
     // A provider switch mid-transcription stops the server once the running uploads finish.
     private var inFlight = 0
     private var stopWhenIdle = false
@@ -192,14 +193,16 @@ actor LocalTranscriptionService {
     }
 
     func shutdown() {
-        if inFlight > 0 { stopWhenIdle = true } else { stop() }
+        // Also covers a transcription that captured this model before the switch and starts later.
+        stopWhenIdle = true
+        if inFlight == 0 { stop() }
     }
 
     func transcribe(audioURL: URL, onLog: LogHandler? = nil) async throws -> String {
         inFlight += 1
         defer {
             inFlight -= 1
-            if inFlight == 0, stopWhenIdle { stopWhenIdle = false; stop() }
+            if inFlight == 0, stopWhenIdle { stop() }
         }
         let wavURL = FileManager.default.temporaryDirectory.appending(path: "notchtalk_local_\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: wavURL) }
@@ -210,6 +213,7 @@ actor LocalTranscriptionService {
         var request = URLRequest(url: base, timeoutInterval: 600)
         request.httpMethod = "POST"
         request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
+        request.setValue(token, forHTTPHeaderField: "X-Notchtalk-Token")
         let started = Date()
         let (data, response) = try await URLSession.shared.upload(for: request, fromFile: wavURL)
         guard let http = response as? HTTPURLResponse else { throw TranscriptionError.invalidResponse }
@@ -243,7 +247,10 @@ actor LocalTranscriptionService {
         stop()
         let task = Task { try await launch() }
         ready = task
-        return try await task.value
+        do { return try await task.value } catch {
+            if ready == task { ready = nil }
+            throw error
+        }
     }
 
     private func launch() async throws -> URL {
@@ -251,6 +258,7 @@ actor LocalTranscriptionService {
         let port = Int.random(in: 20_000...60_000)
         // Another local service may hold the port; only our server echoes this token.
         let token = UUID().uuidString
+        self.token = token
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         // The wrapper stops the server when Notchtalk exits, also after a crash.
@@ -347,6 +355,8 @@ actor LocalTranscriptionService {
                 self.wfile.write(data)
 
             def do_POST(self):
+                if self.headers["X-Notchtalk-Token"] != sys.argv[2]:
+                    return self.reply(403, {"error": {"message": "wrong token"}})
                 body = self.rfile.read(int(self.headers["Content-Length"]))
                 try:
                     with tempfile.NamedTemporaryFile(suffix=".wav") as f, lock:
