@@ -35,6 +35,11 @@ final class NotchStateManager {
     var finishProgress: Double?
     private var finishTask: Task<Void, Never>?
     private var finishDeadline: TimeInterval?
+    /// A second press this soon after the press that started a recording is a double tap: paste the last transcript.
+    private static let doubleTapWindow: TimeInterval = 0.4
+    private var recordingStartedAt: TimeInterval?
+    private var pasteGestureTask: Task<Void, Never>?
+    var pasteGesturePending: Bool { pasteGestureTask != nil }
     var state: AppState = .idle
     var audioLevel: CGFloat = 0.0
     var recordingDuration: TimeInterval = 0
@@ -122,6 +127,7 @@ final class NotchStateManager {
             Task { await model.service.prewarm() }
         }
         state = .recording
+        recordingStartedAt = ProcessInfo.processInfo.systemUptime
         recordingDuration = 0
         currentRecordingURL = nil
         activeDiagnosticsID = nil
@@ -183,6 +189,9 @@ final class NotchStateManager {
 
     func beginFinishGesture() {
         guard state == .recording, finishProgress == nil else { return }
+        if let recordingStartedAt, ProcessInfo.processInfo.systemUptime - recordingStartedAt <= Self.doubleTapWindow {
+            return beginPasteGesture()
+        }
         finishProgress = 0
         let duration = SettingsManager.shared.finishHoldDelay
         let started = ProcessInfo.processInfo.systemUptime
@@ -202,18 +211,49 @@ final class NotchStateManager {
     }
 
     func abandonFinishGesture() {
+        pasteGestureTask?.cancel()
+        pasteGestureTask = nil
         finishTask?.cancel()
         finishTask = nil
         finishProgress = nil
     }
 
     func releaseFinishGesture() {
+        if pasteGestureTask != nil { return finishPasteGesture(submit: false) }
         guard finishProgress != nil, state == .recording else { return }
         let shouldSend = finishDeadline.map { ProcessInfo.processInfo.systemUptime >= $0 } ?? false
         finishTask?.cancel()
         finishTask = nil
         finishProgress = nil
         stopRecording(submitAfterPaste: shouldSend)
+    }
+
+    /// Double tap: the first tap's recording is dropped without a trace. Releasing pastes the last
+    /// transcript; holding the second press as long as the finish gesture pastes it with Enter.
+    private func beginPasteGesture() {
+        recordingTask?.cancel()
+        recordingTask = nil
+        audioRecorder.cancelRecording()
+        if let activeDiagnosticsID { diagnosticsStore.remove(activeDiagnosticsID) }
+        activeDiagnosticsID = nil
+        reset()
+        let delay = SettingsManager.shared.finishHoldDelay
+        pasteGestureTask = Task {
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            finishPasteGesture(submit: true)
+        }
+    }
+
+    /// The newest transcript in History, so a background job that just finished counts too.
+    private func finishPasteGesture(submit: Bool) {
+        pasteGestureTask?.cancel()
+        pasteGestureTask = nil
+        let last = diagnosticsStore.entries
+            .filter { $0.status == .succeeded && !($0.transcriptText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .max { $0.updatedAt < $1.updatedAt }
+        guard let text = last?.transcriptText else { return SoundManager.shared.playErrorSound() }
+        ClipboardService.pastePreservingClipboard(text, submit: submit)
     }
 
     func stopRecording(submitAfterPaste: Bool = false, trigger: String = "programmatic") {

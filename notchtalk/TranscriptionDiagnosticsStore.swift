@@ -313,6 +313,11 @@ final class TranscriptionDiagnosticsStore {
         }
     }
 
+    func remove(_ id: UUID) {
+        entries.removeAll { $0.id == id }
+        persistToDisk()
+    }
+
     func clearAll() {
         for entry in entries {
             if let filename = entry.retainedAudioFilename, !filename.isEmpty {

@@ -71,7 +71,7 @@ final class AppController {
         }
         HotKeyManager.shared.onChordCancel = { [weak self] in
             guard let self else { return }
-            if self.stateManager.finishProgress != nil {
+            if self.stateManager.finishProgress != nil || self.stateManager.pasteGesturePending {
                 self.stateManager.abandonFinishGesture()
                 return
             }
