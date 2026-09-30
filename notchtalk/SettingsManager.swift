@@ -28,6 +28,7 @@ final class SettingsManager {
     var transcriptionProvider: TranscriptionProvider {
         didSet {
             UserDefaults.standard.set(transcriptionProvider.rawValue, forKey: "transcriptionProvider")
+            ParakeetTranscriptionService.follow(transcriptionProvider)
         }
     }
     var transcriptionPrompt: String {
@@ -111,6 +112,7 @@ final class SettingsManager {
         self.hasOpenAIAPIKey = KeychainService.hasAPIKey(for: .openAI)
         self.hasElevenLabsAPIKey = KeychainService.hasAPIKey(for: .elevenLabs)
         defaults.set(self.sendWithEnter, forKey: "sendWithEnter")
+        ParakeetTranscriptionService.follow(transcriptionProvider)
     }
 
     /// Also called at launch and after microphone access is granted.
@@ -124,8 +126,8 @@ final class SettingsManager {
             return hasOpenAIAPIKey
         case .elevenLabs:
             return hasElevenLabsAPIKey
-        case .phonon:
-            return PhononInstaller.shared.isInstalled
+        case .parakeet:
+            return ParakeetInstaller.shared.isInstalled
         }
     }
 
@@ -147,7 +149,7 @@ final class SettingsManager {
             hasOpenAIAPIKey = hasKey
         case .elevenLabs:
             hasElevenLabsAPIKey = hasKey
-        case .phonon:
+        case .parakeet:
             break
         }
     }

@@ -117,9 +117,9 @@ final class NotchStateManager {
             return
         }
 
-        if provider == .phonon {
+        if provider == .parakeet {
             // The model server starts while the user speaks.
-            Task { await PhononTranscriptionService.shared.prewarm() }
+            Task { await ParakeetTranscriptionService.shared.prewarm() }
         }
         state = .recording
         recordingDuration = 0
@@ -736,8 +736,8 @@ final class NotchStateManager {
                 onRetry: onRetry,
                 onLog: onLog
             )
-        case .phonon:
-            return try await PhononTranscriptionService.shared.transcribe(audioURL: audioURL, onLog: onLog)
+        case .parakeet:
+            return try await ParakeetTranscriptionService.shared.transcribe(audioURL: audioURL, onLog: onLog)
         }
     }
 

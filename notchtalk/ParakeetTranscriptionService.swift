@@ -1,17 +1,18 @@
 //
-//  PhononTranscriptionService.swift
+//  ParakeetTranscriptionService.swift
 //  notchtalk
 //
 
 import Foundation
 import Observation
 
-/// Phonon-2 by Fermion Research (CC BY 4.0) transcribes on this Mac. Installing downloads uv, a
-/// Python runtime with the `fermion` package and the 164 MB model into Application Support.
+/// NVIDIA Parakeet-TDT 0.6B v3 (CC BY 4.0, 25 European languages) transcribes on this Mac through
+/// mlx-audio. Installing downloads uv, a Python runtime with mlx-audio and the 2.3 GB model into
+/// Application Support.
 @MainActor
 @Observable
-final class PhononInstaller {
-    static let shared = PhononInstaller()
+final class ParakeetInstaller {
+    static let shared = ParakeetInstaller()
 
     enum State: Equatable {
         case notInstalled
@@ -20,14 +21,14 @@ final class PhononInstaller {
         case failed(String)
     }
 
-    private(set) var state: State = PhononTranscriptionService.isInstalled ? .installed : .notInstalled
+    private(set) var state: State = ParakeetTranscriptionService.isInstalled ? .installed : .notInstalled
 
     var isInstalled: Bool { state == .installed }
 
     /// Picks up a folder deleted or installed outside the app.
     func refresh() {
         if case .installing = state { return }
-        state = PhononTranscriptionService.isInstalled ? .installed : .notInstalled
+        state = ParakeetTranscriptionService.isInstalled ? .installed : .notInstalled
     }
 
     func install() {
@@ -35,14 +36,14 @@ final class PhononInstaller {
         state = .installing("Starting")
         Task {
             do {
-                try await PhononTranscriptionService.install { step in
+                try await ParakeetTranscriptionService.install { step in
                     Task { @MainActor in
-                        let installer = PhononInstaller.shared
+                        let installer = ParakeetInstaller.shared
                         if case .installing = installer.state { installer.state = .installing(step) }
                     }
                 }
                 state = .installed
-                await PhononTranscriptionService.shared.prewarm()
+                await ParakeetTranscriptionService.shared.prewarm()
             } catch {
                 state = .failed(error.localizedDescription)
             }
@@ -50,19 +51,20 @@ final class PhononInstaller {
     }
 }
 
-actor PhononTranscriptionService {
+actor ParakeetTranscriptionService {
     typealias LogHandler = @MainActor @Sendable (_ message: String, _ level: TranscriptionDiagnosticsEntry.LogLevel) async -> Void
 
-    static let shared = PhononTranscriptionService()
+    static let shared = ParakeetTranscriptionService()
 
     nonisolated static let root = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appending(path: "notchtalk/phonon", directoryHint: .isDirectory)
+        .appending(path: "notchtalk/parakeet", directoryHint: .isDirectory)
     private nonisolated static let marker = root.appending(path: "installed")
     nonisolated static var isInstalled: Bool { FileManager.default.fileExists(atPath: marker.path) }
 
-    private static let model = "FermionResearch/Phonon-2"
-    private static let idleShutdown: Duration = .seconds(15 * 60)
+    // Full precision on purpose: the 2-bit Phonon-2 build of this model garbled German.
+    private static let model = "mlx-community/parakeet-tdt-0.6b-v3"
+    private static let revision = "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15"
 
     struct Reply: Decodable, Sendable {
         struct Failure: Decodable, Sendable { let message: String }
@@ -72,54 +74,50 @@ actor PhononTranscriptionService {
 
     private var server: Process?
     private var ready: Task<URL, Error>?
-    private var idleStop: Task<Void, Never>?
 
     /// Starts the model server so the first transcription does not wait for it.
     func prewarm() async {
         _ = try? await baseURL()
-        scheduleIdleStop()
+    }
+
+    /// Keeps the server warm while Parakeet is the provider and stops it otherwise.
+    // ponytail: the warm server holds about 3 GB for as long as Parakeet is selected; an idle
+    // timeout would bring back the 10 s cold start on the next short recording.
+    nonisolated static func follow(_ provider: TranscriptionProvider) {
+        Task {
+            if provider == .parakeet, isInstalled { await shared.prewarm() } else { await shared.shutdown() }
+        }
+    }
+
+    func shutdown() {
+        stop()
     }
 
     func transcribe(audioURL: URL, onLog: LogHandler? = nil) async throws -> String {
-        let wavURL = FileManager.default.temporaryDirectory.appending(path: "notchtalk_phonon_\(UUID().uuidString).wav")
+        let wavURL = FileManager.default.temporaryDirectory.appending(path: "notchtalk_parakeet_\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: wavURL) }
-        // The server reads wav, flac, ogg and aiff; recordings and memos are AAC.
+        // The model reads 16 kHz mono; recordings and memos are AAC.
         try await Self.run("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", audioURL.path, wavURL.path])
 
         let base = try await baseURL()
-        defer { scheduleIdleStop() }
-        let boundary = UUID().uuidString
-        // The body is streamed from a file: an hour of audio is about 115 MB.
-        let bodyURL = wavURL.appendingPathExtension("body")
-        defer { try? FileManager.default.removeItem(at: bodyURL) }
-        FileManager.default.createFile(atPath: bodyURL.path, contents: Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n".utf8))
-        let body = try FileHandle(forWritingTo: bodyURL)
-        let wav = try FileHandle(forReadingFrom: wavURL)
-        defer { try? wav.close() }
-        try body.seekToEnd()
-        while let chunk = try wav.read(upToCount: 1 << 20), !chunk.isEmpty { try body.write(contentsOf: chunk) }
-        try body.write(contentsOf: Data("\r\n--\(boundary)--\r\n".utf8))
-        try body.close()
-
-        var request = URLRequest(url: base.appending(path: "v1/audio/transcriptions"), timeoutInterval: 600)
+        var request = URLRequest(url: base, timeoutInterval: 600)
         request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("audio/wav", forHTTPHeaderField: "Content-Type")
         let started = Date()
-        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: bodyURL)
+        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: wavURL)
         guard let http = response as? HTTPURLResponse else { throw TranscriptionError.invalidResponse }
 
         let reply = try? JSONDecoder().decode(Reply.self, from: data)
         guard http.statusCode == 200, let text = reply?.text else {
             throw reply?.error.map { TranscriptionError.apiError($0.message) } ?? TranscriptionError.httpError(http.statusCode)
         }
-        await onLog?(String(format: "Phonon-2 transcribed on this Mac in %.1f s", Date().timeIntervalSince(started)), .info)
+        await onLog?(String(format: "Parakeet transcribed on this Mac in %.1f s", Date().timeIntervalSince(started)), .info)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw TranscriptionError.emptyTranscript }
         return trimmed
     }
 
     private func baseURL() async throws -> URL {
-        idleStop?.cancel()
         // A start in flight is awaited, not replaced: its process may not exist yet. After a failed
         // start only the first waiter launches again; the others await that replacement.
         while let current = ready {
@@ -133,17 +131,18 @@ actor PhononTranscriptionService {
     }
 
     private func launch() async throws -> URL {
-        guard Self.isInstalled else { throw TranscriptionError.apiError("Phonon-2 is not installed") }
+        guard Self.isInstalled else { throw TranscriptionError.apiError("Parakeet is not installed") }
         let port = Int.random(in: 20_000...60_000)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         // The wrapper stops the server when Notchtalk exits, also after a crash.
         process.arguments = ["-c", """
-            "$ROOT/venv/bin/fermion" serve --model \(Self.model) --port \(port) & child=$!
+            "$ROOT/venv/bin/python" "$ROOT/server.py" \(port) & child=$!
             trap 'kill $child 2>/dev/null' EXIT
             while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null && kill -0 $child 2>/dev/null; do sleep 2; done
             """]
-        process.environment = Self.environment
+        process.environment = Self.environment.merging(["HF_HUB_OFFLINE": "1"]) { $1 }
+        try Data(Self.serverScript.utf8).write(to: Self.root.appending(path: "server.py"))
         let log = Self.root.appending(path: "server.log")
         FileManager.default.createFile(atPath: log.path, contents: nil)
         let handle = try FileHandle(forWritingTo: log)
@@ -153,10 +152,10 @@ actor PhononTranscriptionService {
         server = process
 
         let base = URL(string: "http://127.0.0.1:\(port)")!
-        // A cold start loads Python and the model in about 15 s; the first run also compiles shaders.
+        // A cold start loads Python and the model in about 10 s.
         for _ in 0..<240 {
             guard process.isRunning else { break }
-            if let (_, response) = try? await URLSession.shared.data(from: base.appending(path: "health")),
+            if let (_, response) = try? await URLSession.shared.data(from: base),
                (response as? HTTPURLResponse)?.statusCode == 200 {
                 return base
             }
@@ -165,24 +164,13 @@ actor PhononTranscriptionService {
         // `ready` stays on this failed start so concurrent waiters can tell it apart from a retry.
         process.terminate()
         if server === process { server = nil }
-        throw TranscriptionError.apiError("Phonon-2 did not start, see \(log.path)")
+        throw TranscriptionError.apiError("Parakeet did not start, see \(log.path)")
     }
 
     private func stop() {
         server?.terminate()
         server = nil
         ready = nil
-    }
-
-    private func scheduleIdleStop() {
-        idleStop?.cancel()
-        // ponytail: the warm server holds about 2.5 GB, so it stops after 15 idle minutes; the next
-        // recording starts it again while the user speaks.
-        idleStop = Task {
-            try? await Task.sleep(for: Self.idleShutdown)
-            guard !Task.isCancelled else { return }
-            stop()
-        }
     }
 
     // MARK: Install
@@ -195,21 +183,20 @@ actor PhononTranscriptionService {
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "UV_CACHE_DIR": root + "/uv-cache",
             "UV_PYTHON_INSTALL_DIR": root + "/python",
-            "FERMION_CACHE_DIR": root + "/models",
             "HF_HOME": root + "/hf",
             "HF_HUB_DISABLE_TELEMETRY": "1",
         ]
     }
 
-    /// Each `echo` line becomes the step shown in Settings. The direct dependencies are pinned to
-    /// the versions tested with Phonon-2.
+    /// Each `echo` line becomes the step shown in Settings. The direct dependencies and the model
+    /// revision are pinned to the versions tested here.
     private static let installScript = """
         set -euo pipefail
         # Quitting Notchtalk mid-install stops the download too.
         ( trap '' TERM; while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do sleep 2; done
           pkill -TERM -P $$; kill -TERM $$ ) & watcher=$!
         trap 'kill -9 $watcher 2>/dev/null' EXIT
-        [ "$(uname -m)" = arm64 ] || { echo "Phonon-2 needs a Mac with Apple silicon" >&2; exit 1; }
+        [ "$(uname -m)" = arm64 ] || { echo "Parakeet needs a Mac with Apple silicon" >&2; exit 1; }
         mkdir -p "$ROOT/bin" && cd "$ROOT"
         if [ ! -x bin/uv ]; then
           echo "Downloading uv"
@@ -219,13 +206,50 @@ actor PhononTranscriptionService {
         echo "Installing Python"
         bin/uv venv -q --allow-existing --managed-python --python 3.12 venv
         echo "Installing the speech engine"
-        bin/uv pip install -q --python venv/bin/python \
-          fermion-research==0.2.3 mlx==0.32.3 mlx-audio==0.5.7 mlx-lm==0.31.3 \
-          soundfile==0.14.0 scipy==1.18.1 zstandard==0.25.0
-        echo "Downloading Phonon-2 (164 MB)"
-        venv/bin/fermion transcribe --download-only --model \(model) placeholder.wav > /dev/null
+        bin/uv pip install -q --python venv/bin/python mlx==0.32.3 mlx-audio==0.5.7
+        echo "Downloading Parakeet (2.3 GB)"
+        venv/bin/python -c 'import huggingface_hub, sys; huggingface_hub.snapshot_download(sys.argv[1], revision=sys.argv[2])' \
+          \(model) \(revision) > /dev/null
         bin/uv cache clean -q
         touch installed
+        """
+
+    /// Loads the model once and answers `POST /` (a 16 kHz wav body) with `{"text"}` and `GET /`
+    /// with 200. One request decodes at a time.
+    private static let serverScript = """
+        import json, sys, tempfile, threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from mlx_audio.stt.utils import load_model
+
+        model = load_model("\(model)", revision="\(revision)")
+        lock = threading.Lock()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.reply(200, {"ok": True})
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".wav") as f, lock:
+                        f.write(body)
+                        f.flush()
+                        self.reply(200, {"text": model.generate(f.name).text})
+                except Exception as error:
+                    self.reply(500, {"error": {"message": str(error)}})
+
+            def reply(self, status, payload):
+                data = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
         """
 
     nonisolated static func install(onStep: @escaping @Sendable (String) -> Void) async throws {
