@@ -205,6 +205,10 @@ actor PhononTranscriptionService {
     /// the versions tested with Phonon-2.
     private static let installScript = """
         set -euo pipefail
+        # Quitting Notchtalk mid-install stops the download too.
+        ( trap '' TERM; while kill -0 \(ProcessInfo.processInfo.processIdentifier) 2>/dev/null; do sleep 2; done
+          pkill -TERM -P $$; kill -TERM $$ ) & watcher=$!
+        trap 'kill -9 $watcher 2>/dev/null' EXIT
         [ "$(uname -m)" = arm64 ] || { echo "Phonon-2 needs a Mac with Apple silicon" >&2; exit 1; }
         mkdir -p "$ROOT/bin" && cd "$ROOT"
         if [ ! -x bin/uv ]; then
@@ -261,10 +265,14 @@ actor PhononTranscriptionService {
                         ?? "\((tool as NSString).lastPathComponent) failed with status \(process.terminationStatus)"
                     continuation.resume(throwing: TranscriptionError.apiError(message))
                 }
-                do { try process.run() } catch { continuation.resume(throwing: error) }
+                do {
+                    try Task.checkCancellation()
+                    try process.run()
+                } catch { continuation.resume(throwing: error) }
             }
         } onCancel: {
-            process.terminate()
+            // terminate() on a process that never launched raises an Objective-C exception.
+            if process.isRunning { process.terminate() }
         }
     }
 }
