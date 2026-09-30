@@ -16,6 +16,8 @@ final class AmbientBuffer {
     private var samples: [Int16]
     private var writeIndex = 0
     private(set) var count = 0
+    /// System uptime of the newest samples, so a capture that stalls can be noticed.
+    private(set) var lastAppend: TimeInterval = 0
     /// Bumped by every clear, so samples a tap queued before it never land afterwards.
     /// Capture resumes only through a new tap, which carries the new session.
     private(set) var session = 0
@@ -34,6 +36,7 @@ final class AmbientBuffer {
             writeIndex = (writeIndex + 1) % capacity
         }
         count = min(capacity, count + newSamples.count)
+        lastAppend = ProcessInfo.processInfo.systemUptime
     }
 
     /// The newest `n` samples in recording order, across the wrap point.
@@ -87,6 +90,7 @@ final class AmbientRecorder {
     private var asleep = false
     private var wanted = false
     private var retryTask: Task<Void, Never>?
+    private var watchdog: Task<Void, Never>?
 
     /// Starts, resizes, or stops (and discards) to match the settings.
     func update(enabled: Bool, windowMinutes: Int) {
@@ -124,9 +128,21 @@ final class AmbientRecorder {
             return
         }
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat, block: tap)
+        // A new input device (AirPods, unplugged mic) stops the engine; follow it and keep the window.
+        // Observed before start(): a change can arrive while start() still runs, and a missed one
+        // left the tap silent while the window kept its first seconds (30.09.2026).
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            // Apple: never tear the engine down inside this notification's handler, it can deadlock.
+            Task { @MainActor [weak self] in self?.restart("configuration change") }
+        }
         do {
             try engine.start()
         } catch {
+            stopEngine()
             input.removeTap(onBus: 0)
             NSLog("Ambient: engine failed to start: \(error.localizedDescription)")
             retryLater()
@@ -134,17 +150,26 @@ final class AmbientRecorder {
         }
         self.engine = engine
         isRunning = true
-        // A new input device (AirPods, unplugged mic) stops the engine; follow it and keep the window.
-        configurationObserver = NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange,
-            object: engine,
-            queue: .main
-        ) { [weak self] _ in
-            // Apple: never tear the engine down inside this notification's handler, it can deadlock.
-            Task { @MainActor [weak self] in
-                guard let self, self.isRunning else { return }
-                self.stopEngine()
-                self.start()
+        watchStall()
+    }
+
+    private func restart(_ reason: String) {
+        guard isRunning else { return }
+        NSLog("Ambient: restarting after \(reason)")
+        stopEngine()
+        start()
+    }
+
+    /// A tap can go silent without any notification; restart when no audio arrived for a while.
+    private func watchStall() {
+        watchdog?.cancel()
+        let started = ProcessInfo.processInfo.systemUptime
+        watchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, !Task.isCancelled else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - max(self.buffer.lastAppend, started) > 5 { return self.restart("no audio for 5 s") }
             }
         }
     }
@@ -187,6 +212,8 @@ final class AmbientRecorder {
     }
 
     private func stopEngine() {
+        watchdog?.cancel()
+        watchdog = nil
         if let configurationObserver {
             NotificationCenter.default.removeObserver(configurationObserver)
         }

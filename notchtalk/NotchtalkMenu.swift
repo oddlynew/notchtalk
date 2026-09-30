@@ -55,7 +55,6 @@ struct NotchtalkMenu: View {
                         ForEach(AmbientRecorder.recallChoices.filter { $0 <= settings.ambientWindowMinutes }, id: \.self) { minutes in
                             Button("\(minutes) min") { manager.transcribeAmbient(minutes: minutes, allowPaste: false) }
                                 .buttonStyle(QuietButtonStyle())
-                                .disabled(manager.state == .recording || manager.state == .processing)
                         }
                     }
                 }
@@ -101,6 +100,9 @@ struct NotchtalkMenu: View {
         return "Listening. Keeps the last \(settings.ambientWindowMinutes) min, only on this Mac."
     }
     private var status: String {
+        if manager.state == .idle, !manager.backgroundJobs.isEmpty {
+            return "Transcribing \(manager.backgroundJobs.count) in the background…"
+        }
         switch manager.state {
         case .idle: return "Ready when you are"
         case .recording: return "Listening…"

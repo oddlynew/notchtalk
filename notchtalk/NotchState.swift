@@ -525,27 +525,25 @@ final class NotchStateManager {
         }
     }
 
-    /// Cuts the newest `minutes` out of the ambient window and transcribes them the way History
-    /// re-transcribes: same provider, retries and timeouts, never Enter. The menu passes
-    /// allowPaste false because its own panel holds the keyboard focus a paste would land in.
+    /// History entries, voice memos and ambient recalls transcribing next to the notch.
+    private(set) var backgroundJobs: Set<UUID> = []
+
+    /// Cuts the newest `minutes` out of the ambient window and transcribes them in the background,
+    /// like History re-transcribes. The menu passes allowPaste false because its own panel holds
+    /// the keyboard focus a paste would land in.
     func transcribeAmbient(minutes: Int, allowPaste: Bool) {
-        guard state != .recording, state != .processing else { return }
         let samples = AmbientRecorder.shared.buffer.last(minutes * 60 * AmbientBuffer.sampleRate)
         guard !samples.isEmpty else { return }
         let seconds = Double(samples.count) / Double(AmbientBuffer.sampleRate)
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("notchtalk_ambient_\(Date().timeIntervalSince1970).m4a")
+            .appendingPathComponent("notchtalk_ambient_\(UUID().uuidString).m4a")
 
         Task {
             do {
                 try await Task.detached { try AmbientRecorder.encode(samples, to: url) }.value
             } catch {
                 try? FileManager.default.removeItem(at: url)
-                guard state != .recording, state != .processing else { return }
-                state = .error("Ambient failed")
                 SoundManager.shared.playErrorSound()
-                try? await Task.sleep(for: .seconds(2))
-                if case .error = state { reset() }
                 return
             }
             let provider = SettingsManager.shared.transcriptionProvider
@@ -558,11 +556,6 @@ final class NotchStateManager {
                 label: "Ambient, \(Int((seconds / 60).rounded(.up))) min"
             )
             diagnosticsStore.retainAudio(sourceURL: url, for: id)
-            // A recording that started while we encoded wins; the audio waits in History.
-            guard state != .recording, state != .processing else {
-                diagnosticsStore.markFailed(for: id, message: "Busy with another recording; re-transcribe from History")
-                return
-            }
             retranscribe(
                 diagnosticsID: id,
                 audioDuration: seconds,
@@ -572,100 +565,54 @@ final class NotchStateManager {
         }
     }
 
+    /// Transcribes a History entry in the background: any number at once, and the notch keeps
+    /// recording and transcribing meanwhile. The transcript lands in History and on the clipboard;
+    /// it is pasted only when allowed and nothing is recording or transcribing in the notch.
     func retranscribe(
         diagnosticsID: UUID,
         audioDuration: TimeInterval? = nil,
         reason: String = "Manual re-transcribe requested",
         allowPaste: Bool = true
     ) {
-        if case .recording = state {
-            return
-        }
-        if case .processing = state {
-            return
-        }
-
-        processingTask?.cancel()
-        pendingSubmit = false
-        canToggleProcessingEnter = false
-        pasteForCurrentTranscription = allowPaste && SettingsManager.shared.autoPasteEnabled
-        latestTranscript = nil
-        guard let retainedAudioURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID) else {
-            state = .error("No audio")
+        guard !backgroundJobs.contains(diagnosticsID) else { return }
+        guard let audioURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID),
+              FileManager.default.fileExists(atPath: audioURL.path) else {
+            diagnosticsStore.markFailed(for: diagnosticsID, message: "The audio is no longer kept")
             SoundManager.shared.playErrorSound()
-            processingTask?.cancel()
-            processingTask = Task {
-                try? await Task.sleep(for: .seconds(2))
-                guard !Task.isCancelled else { return }
-                reset()
-            }
             return
         }
-
-        if !FileManager.default.fileExists(atPath: retainedAudioURL.path) {
-            state = .error("Missing audio")
-            SoundManager.shared.playErrorSound()
-            processingTask?.cancel()
-            processingTask = Task {
-                try? await Task.sleep(for: .seconds(2))
-                guard !Task.isCancelled else { return }
-                reset()
-            }
-            return
-        }
-
         let provider = SettingsManager.shared.transcriptionProvider
         guard provider.isReady else {
-            state = .error(provider.notReadyMessage)
+            diagnosticsStore.markFailed(for: diagnosticsID, message: provider.notReadyMessage)
+            SoundManager.shared.playErrorSound()
             SettingsWindowController.show()
-            processingTask?.cancel()
-            processingTask = Task {
-                try? await Task.sleep(for: .seconds(2))
-                guard !Task.isCancelled else { return }
-                reset()
-            }
             return
         }
-
-        state = .processing
-        retryAttempt = nil
-        totalRetries = 0
-        processingControlsAvailable = false
-        currentRecordingURL = retainedAudioURL
-        currentRecordingDuration = audioDuration
-        activeDiagnosticsID = diagnosticsID
-
         let speakerRecognitionEnabled = provider == .elevenLabs
             && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled
         let prompt = provider == .openAI && !SettingsManager.shared.transcriptionPrompt.isEmpty
             ? SettingsManager.shared.transcriptionPrompt
             : nil
+        backgroundJobs.insert(diagnosticsID)
         diagnosticsStore.prepareForManualRetry(for: diagnosticsID, reason: reason)
         diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
-        startProcessingTimer()
 
-        processingTask?.cancel()
-        processingTask = Task {
+        Task {
+            defer { backgroundJobs.remove(diagnosticsID) }
             do {
                 let transcription = try await transcribe(
-                    audioURL: retainedAudioURL,
+                    audioURL: audioURL,
                     prompt: prompt,
                     provider: provider,
                     speakerRecognitionEnabled: speakerRecognitionEnabled,
                     audioDuration: audioDuration,
                     onRetry: { [weak self] attempt, totalRetries in
-                        self?.retryAttempt = attempt
-                        self?.totalRetries = totalRetries
                         self?.diagnosticsStore.registerRetry(attempt: attempt, total: totalRetries, for: diagnosticsID)
                     },
                     onLog: { [weak self] message, level in
                         self?.diagnosticsStore.log(message, level: level, for: diagnosticsID)
                     }
                 )
-
-                guard !Task.isCancelled else { return }
-
-                latestTranscript = transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : transcription
                 diagnosticsStore.markSucceeded(
                     for: diagnosticsID,
                     transcriptText: transcription,
@@ -675,36 +622,18 @@ final class NotchStateManager {
                     promptProvided: prompt != nil
                 )
                 VoiceMemoLibrary.shared.rememberTranscribed(diagnosticsID)
-
-                if pasteForCurrentTranscription {
-                    lastOutputDisposition = .pastedToCursor
+                if !transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    latestTranscript = transcription
+                }
+                // A paste during a dictation would land in the text the user is dictating into.
+                if allowPaste, SettingsManager.shared.autoPasteEnabled, state == .idle {
                     ClipboardService.pastePreservingClipboard(transcription)
                 } else {
-                    lastOutputDisposition = .copiedToClipboard
                     ClipboardService.copy(transcription)
                 }
-
-                state = .done
-                activeDiagnosticsID = nil
-                stopProcessingTimer()
-
-                try? await Task.sleep(for: .seconds(0.8))
-
-                guard !Task.isCancelled else { return }
-                reset()
             } catch {
-                guard !Task.isCancelled else { return }
-
                 diagnosticsStore.markFailed(for: diagnosticsID, message: error.localizedDescription)
-                state = .error((error as? TranscriptionError)?.statusMessage ?? "Failed")
                 SoundManager.shared.playErrorSound()
-                activeDiagnosticsID = nil
-                stopProcessingTimer()
-
-                try? await Task.sleep(for: .seconds(3))
-
-                guard !Task.isCancelled else { return }
-                reset()
             }
         }
     }
