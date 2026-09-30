@@ -120,8 +120,12 @@ actor PhononTranscriptionService {
 
     private func baseURL() async throws -> URL {
         idleStop?.cancel()
-        // A start in flight is awaited, not replaced: its process may not exist yet.
-        if let ready, let url = try? await ready.value, server?.isRunning == true { return url }
+        // A start in flight is awaited, not replaced: its process may not exist yet. After a failed
+        // start only the first waiter launches again; the others await that replacement.
+        while let current = ready {
+            if let url = try? await current.value, server?.isRunning == true { return url }
+            if ready == current { break }
+        }
         stop()
         let task = Task { try await launch() }
         ready = task
@@ -158,7 +162,9 @@ actor PhononTranscriptionService {
             }
             try await Task.sleep(for: .milliseconds(500))
         }
-        stop()
+        // `ready` stays on this failed start so concurrent waiters can tell it apart from a retry.
+        process.terminate()
+        if server === process { server = nil }
         throw TranscriptionError.apiError("Phonon-2 did not start, see \(log.path)")
     }
 
@@ -195,8 +201,8 @@ actor PhononTranscriptionService {
         ]
     }
 
-    /// Each `echo` line becomes the step shown in Settings. Versions are pinned to the set tested
-    /// with Phonon-2 so a reinstall gets the same runtime.
+    /// Each `echo` line becomes the step shown in Settings. The direct dependencies are pinned to
+    /// the versions tested with Phonon-2.
     private static let installScript = """
         set -euo pipefail
         [ "$(uname -m)" = arm64 ] || { echo "Phonon-2 needs a Mac with Apple silicon" >&2; exit 1; }
