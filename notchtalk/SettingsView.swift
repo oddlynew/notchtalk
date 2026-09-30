@@ -146,6 +146,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .id(model)
+                .onAppear { model.installer.refresh() }
             } else {
                 Section {
                     apiKeySection
@@ -779,7 +780,6 @@ struct SettingsView: View {
                     .font(.caption)
             }
         }
-        EmptyView().onAppear { installer.refresh() }
     }
 
     @ViewBuilder

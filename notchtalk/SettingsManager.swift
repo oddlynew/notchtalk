@@ -28,7 +28,7 @@ final class SettingsManager {
     var transcriptionProvider: TranscriptionProvider {
         didSet {
             UserDefaults.standard.set(transcriptionProvider.rawValue, forKey: "transcriptionProvider")
-            LocalTranscriptionService.follow(transcriptionProvider)
+            LocalTranscriptionService.follow()
         }
     }
     var transcriptionPrompt: String {
@@ -112,7 +112,7 @@ final class SettingsManager {
         self.hasOpenAIAPIKey = KeychainService.hasAPIKey(for: .openAI)
         self.hasElevenLabsAPIKey = KeychainService.hasAPIKey(for: .elevenLabs)
         defaults.set(self.sendWithEnter, forKey: "sendWithEnter")
-        LocalTranscriptionService.follow(transcriptionProvider)
+        LocalTranscriptionService.follow()
     }
 
     /// Also called at launch and after microphone access is granted.

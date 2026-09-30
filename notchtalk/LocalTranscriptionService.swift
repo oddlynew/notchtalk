@@ -139,7 +139,7 @@ final class LocalModelInstaller {
                     }
                 }
                 state = .installed
-                LocalTranscriptionService.follow(SettingsManager.shared.transcriptionProvider)
+                LocalTranscriptionService.follow()
             } catch {
                 state = .failed(error.localizedDescription)
             }
@@ -179,10 +179,14 @@ actor LocalTranscriptionService {
     /// Keeps the selected model's server warm and stops the other one.
     // ponytail: the warm server holds up to 3 GB for as long as its model is selected; an idle
     // timeout would bring back the 10 s cold start on the next short recording.
-    nonisolated static func follow(_ provider: TranscriptionProvider) {
-        Task {
-            for model in [LocalModel.parakeet, .phonon2] {
-                if provider.localModel == model, model.isInstalled { await model.service.prewarm() } else { await model.service.shutdown() }
+    // Reads the selection at each step, so an older call that resumes late follows the newer one.
+    nonisolated static func follow() {
+        Task { @MainActor in
+            for model in [LocalModel.parakeet, .phonon2] where SettingsManager.shared.transcriptionProvider.localModel != model {
+                await model.service.shutdown()
+            }
+            if let model = SettingsManager.shared.transcriptionProvider.localModel, model.isInstalled {
+                await model.service.prewarm()
             }
         }
     }
@@ -192,16 +196,16 @@ actor LocalTranscriptionService {
     }
 
     func transcribe(audioURL: URL, onLog: LogHandler? = nil) async throws -> String {
-        let wavURL = FileManager.default.temporaryDirectory.appending(path: "notchtalk_local_\(UUID().uuidString).wav")
-        defer { try? FileManager.default.removeItem(at: wavURL) }
-        // The models read 16 kHz mono; recordings and memos are AAC.
-        try await Self.run("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", audioURL.path, wavURL.path])
-
         inFlight += 1
         defer {
             inFlight -= 1
             if inFlight == 0, stopWhenIdle { stopWhenIdle = false; stop() }
         }
+        let wavURL = FileManager.default.temporaryDirectory.appending(path: "notchtalk_local_\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: wavURL) }
+        // The models read 16 kHz mono; recordings and memos are AAC.
+        try await Self.run("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", audioURL.path, wavURL.path])
+
         let base = try await baseURL()
         var request = URLRequest(url: base, timeoutInterval: 600)
         request.httpMethod = "POST"
@@ -221,11 +225,20 @@ actor LocalTranscriptionService {
     }
 
     private func baseURL() async throws -> URL {
-        // A start in flight is awaited, not replaced: its process may not exist yet. After a failed
-        // start only the first waiter launches again; the others await that replacement.
+        // A start in flight is awaited, not replaced: its process may not exist yet. A failed start
+        // fails all its waiters; the next call starts again.
         while let current = ready {
-            if let url = try? await current.value, server?.isRunning == true { return url }
-            if ready == current { break }
+            let url: URL
+            do { url = try await current.value } catch {
+                if ready == current { ready = nil }
+                throw error
+            }
+            if ready == current {
+                if server?.isRunning == true { return url }
+                break
+            }
+            // shutdown() stopped the start this caller waited on; only a transcription restarts it.
+            guard ready != nil else { throw CancellationError() }
         }
         stop()
         let task = Task { try await launch() }
@@ -265,7 +278,6 @@ actor LocalTranscriptionService {
             }
             try await Task.sleep(for: .milliseconds(500))
         }
-        // `ready` stays on this failed start so concurrent waiters can tell it apart from a retry.
         process.terminate()
         if server === process { server = nil }
         throw TranscriptionError.apiError("\(model.name) did not start, see \(log.path)")
