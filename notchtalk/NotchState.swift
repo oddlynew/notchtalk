@@ -245,14 +245,15 @@ final class NotchStateManager {
         }
     }
 
-    /// The newest transcript in History, so a background job that just finished counts too.
+    /// The newest History entry with text (entries are newest first), so voice memos and ambient
+    /// recalls count too, and an entry keeps its text while it is being re-transcribed.
     private func finishPasteGesture(submit: Bool) {
         pasteGestureTask?.cancel()
         pasteGestureTask = nil
-        let last = diagnosticsStore.entries
-            .filter { $0.status == .succeeded && !($0.transcriptText ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .max { $0.updatedAt < $1.updatedAt }
-        guard let text = last?.transcriptText else { return SoundManager.shared.playErrorSound() }
+        let text = diagnosticsStore.entries.lazy
+            .compactMap(\.transcriptText)
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard let text else { return SoundManager.shared.playErrorSound() }
         ClipboardService.pastePreservingClipboard(text, submit: submit)
     }
 
