@@ -125,7 +125,7 @@ final class SettingsManager {
         case .elevenLabs:
             return hasElevenLabsAPIKey
         case .phonon:
-            return PhononTranscriptionService.isInstalled
+            return PhononInstaller.shared.isInstalled
         }
     }
 
