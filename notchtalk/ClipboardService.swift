@@ -79,9 +79,17 @@ enum ClipboardService {
     }
 
     @MainActor
-    static func pastePreservingClipboard(_ text: String, submit: Bool = false) {
+    /// `onlyIf` is checked when the paste's turn comes; false copies the text instead.
+    static func pastePreservingClipboard(_ text: String, submit: Bool = false, onlyIf: @escaping @MainActor () -> Bool = { true }) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        afterPendingPaste(holding: 0.25) { paste(text, submit: submit) }
+        afterPendingPaste(holding: 0.25) {
+            guard onlyIf() else {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                return
+            }
+            paste(text, submit: submit)
+        }
     }
 
     @MainActor

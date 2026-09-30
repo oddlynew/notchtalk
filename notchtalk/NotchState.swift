@@ -421,6 +421,9 @@ final class NotchStateManager {
         totalRetries = 0
         processingControlsAvailable = false
         diagnosticsStore.log("User requested retry; cancelling in-flight request", level: .warning, for: diagnosticsID)
+        latestTranscript = nil
+        latestAttempt = UUID()
+        recordingAttempt = latestAttempt
         let provider = SettingsManager.shared.transcriptionProvider
         let speakerRecognitionEnabled = provider == .elevenLabs
             && SettingsManager.shared.elevenLabsSpeakerRecognitionEnabled
@@ -625,6 +628,10 @@ final class NotchStateManager {
         allowPaste: Bool = false
     ) {
         guard !backgroundJobs.contains(diagnosticsID) else { return }
+        // A new attempt retires the previous transcript, as every attempt does (README, Menu and shortcut).
+        latestTranscript = nil
+        let attempt = UUID()
+        latestAttempt = attempt
         guard let audioURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID),
               FileManager.default.fileExists(atPath: audioURL.path) else {
             diagnosticsStore.markFailed(for: diagnosticsID, message: "The audio is no longer kept")
@@ -644,10 +651,6 @@ final class NotchStateManager {
             ? SettingsManager.shared.transcriptionPrompt
             : nil
         backgroundJobs.insert(diagnosticsID)
-        // A new attempt retires the previous transcript, as every attempt does (README, Menu and shortcut).
-        latestTranscript = nil
-        let attempt = UUID()
-        latestAttempt = attempt
         diagnosticsStore.prepareForManualRetry(for: diagnosticsID, reason: reason)
         diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
 
@@ -679,9 +682,12 @@ final class NotchStateManager {
                 if latestAttempt == attempt, !transcription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     latestTranscript = transcription
                 }
-                // A paste during a dictation would land in the text the user is dictating into.
-                if allowPaste, SettingsManager.shared.autoPasteEnabled, state == .idle {
-                    ClipboardService.pastePreservingClipboard(transcription)
+                // A paste during a dictation would land in the text the user is dictating into,
+                // so the check runs again when the paste's turn comes.
+                if allowPaste, SettingsManager.shared.autoPasteEnabled {
+                    ClipboardService.pastePreservingClipboard(transcription, onlyIf: { [weak self] in
+                        self.map { $0.state != .recording && $0.state != .processing } ?? false
+                    })
                 } else {
                     ClipboardService.copy(transcription)
                 }
