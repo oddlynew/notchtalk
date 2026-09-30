@@ -49,6 +49,7 @@ struct SettingsView: View {
 
     @Bindable private var settingsManager = SettingsManager.shared
     @Bindable private var diagnosticsStore = TranscriptionDiagnosticsStore.shared
+    private var phononInstaller = PhononInstaller.shared
     @State private var apiKeyInput = ""
     @State private var showAPIKeyField = false
     @State private var saveError: String?
@@ -136,13 +137,24 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section {
-                apiKeySection
-            } header: {
-                Text("\(settingsManager.transcriptionProvider.displayName) API Key")
-            } footer: {
-                Text("Your API key is stored securely in the macOS Keychain.")
-                    .foregroundStyle(.secondary)
+            if settingsManager.transcriptionProvider == .phonon {
+                Section {
+                    phononSection
+                } header: {
+                    Text("Phonon-2 on this Mac")
+                } footer: {
+                    Text("Audio never leaves this Mac and there is no key or bill. The first install puts about 1.4 GB (a Python runtime and the 164 MB model) into Application Support. Needs Apple silicon. Model by Fermion Research, CC BY 4.0.")
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section {
+                    apiKeySection
+                } header: {
+                    Text("\(settingsManager.transcriptionProvider.displayName) API Key")
+                } footer: {
+                    Text("Your API key is stored securely in the macOS Keychain.")
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if settingsManager.transcriptionProvider == .openAI {
@@ -156,7 +168,7 @@ struct SettingsView: View {
                     Text("Optional prompt to guide OpenAI transcription. Example: \"This is a technical discussion about Swift programming.\"")
                         .foregroundStyle(.secondary)
                 }
-            } else {
+            } else if settingsManager.transcriptionProvider == .elevenLabs {
                 Section {
                     Toggle("Speaker recognition", isOn: $settingsManager.elevenLabsSpeakerRecognitionEnabled)
                     Toggle(
@@ -730,6 +742,32 @@ struct SettingsView: View {
             try? await Task.sleep(for: .seconds(4))
             if exportFeedbackMessage == message {
                 exportFeedbackMessage = nil
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var phononSection: some View {
+        switch phononInstaller.state {
+        case .installed:
+            Label("Installed", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .installing(let step):
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(step)
+            }
+        case .notInstalled, .failed:
+            HStack {
+                Text("Not installed")
+                Spacer()
+                Button("Download and install") { phononInstaller.install() }
+                    .buttonStyle(.borderedProminent)
+            }
+            if case .failed(let message) = phononInstaller.state {
+                Text(message)
+                    .foregroundStyle(.red)
+                    .font(.caption)
             }
         }
     }
