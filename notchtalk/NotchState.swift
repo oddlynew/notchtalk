@@ -104,8 +104,8 @@ final class NotchStateManager {
         processingTask?.cancel()
         latestTranscript = nil
         let provider = SettingsManager.shared.transcriptionProvider
-        guard KeychainService.hasAPIKey(for: provider) else {
-            state = .error("No API key")
+        guard provider.isReady else {
+            state = .error(provider.notReadyMessage)
             SettingsWindowController.show()
 
             processingTask?.cancel()
@@ -117,6 +117,10 @@ final class NotchStateManager {
             return
         }
 
+        if provider == .phonon {
+            // The model server starts while the user speaks.
+            Task { await PhononTranscriptionService.shared.prewarm() }
+        }
         state = .recording
         recordingDuration = 0
         currentRecordingURL = nil
@@ -611,8 +615,8 @@ final class NotchStateManager {
         }
 
         let provider = SettingsManager.shared.transcriptionProvider
-        guard KeychainService.hasAPIKey(for: provider) else {
-            state = .error("No API key")
+        guard provider.isReady else {
+            state = .error(provider.notReadyMessage)
             SettingsWindowController.show()
             processingTask?.cancel()
             processingTask = Task {
@@ -732,6 +736,8 @@ final class NotchStateManager {
                 onRetry: onRetry,
                 onLog: onLog
             )
+        case .phonon:
+            return try await PhononTranscriptionService.shared.transcribe(audioURL: audioURL, onLog: onLog)
         }
     }
 

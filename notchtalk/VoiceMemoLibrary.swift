@@ -134,8 +134,8 @@ final class VoiceMemoLibrary {
                 return fail("Notchtalk was busy with another recording; transcribe the memo again")
             }
             // The notch's own missing-key path would leave this entry pending.
-            guard KeychainService.hasAPIKey(for: provider) else {
-                return fail("No API key for \(provider.displayName)")
+            guard provider.isReady else {
+                return fail(provider == .phonon ? provider.notReadyMessage : "No API key for \(provider.displayName)")
             }
             guard store.retainAudio(sourceURL: copy, for: id) != nil else {
                 return fail("Could not keep a copy of the voice memo")

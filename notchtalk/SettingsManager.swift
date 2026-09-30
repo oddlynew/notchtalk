@@ -124,6 +124,8 @@ final class SettingsManager {
             return hasOpenAIAPIKey
         case .elevenLabs:
             return hasElevenLabsAPIKey
+        case .phonon:
+            return PhononInstaller.shared.isInstalled
         }
     }
 
@@ -145,6 +147,8 @@ final class SettingsManager {
             hasOpenAIAPIKey = hasKey
         case .elevenLabs:
             hasElevenLabsAPIKey = hasKey
+        case .phonon:
+            break
         }
     }
 }

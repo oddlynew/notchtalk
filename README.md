@@ -15,7 +15,7 @@ Notchtalk is intentionally small. It is not planned to be paid, and it is likely
   - Click the **pause button** in the pill to pause and resume a running recording.
   - Press **Esc** to cancel a recording immediately. A transcription still running after 10 seconds shows retry and cancel buttons in the pill. Cancelled audio remains available in History for 24 hours.
 - Shows a small “pill” UI near the notch/screen center while active.
-- Lets you choose OpenAI or ElevenLabs Scribe v2 as the transcription provider.
+- Lets you choose OpenAI, ElevenLabs Scribe v2 or Phonon-2 on this Mac as the transcription provider.
 - Stores provider API keys separately in the macOS Keychain.
 - Can add speaker labels to ElevenLabs transcripts using optional speaker recognition.
 - Lets you set an optional “transcription prompt”.
@@ -29,6 +29,7 @@ Notchtalk keeps provider choices intentionally small:
 - OpenAI primary: `gpt-4o-transcribe`
 - OpenAI fallback (hedged): `gpt-4o-mini-transcribe`
 - ElevenLabs: `scribe_v2`, with optional speaker diarization
+- Phonon-2 (`FermionResearch/Phonon-2`, CC BY 4.0): runs locally on Apple silicon, no key, audio stays on the Mac
 
 There is a provider picker, but no model picker. The goal is “works well by default” rather than “a huge dropdown”.
 
@@ -36,7 +37,7 @@ There is a provider picker, but no model picker. The goal is “works well by de
 
 - macOS `26.2+` (current Xcode project deployment target)
 - Xcode (recent enough to build for macOS 26)
-- An API key for the selected provider (usage is billed by OpenAI or ElevenLabs; Notchtalk does not add any subscription layer)
+- An API key for the selected provider (usage is billed by OpenAI or ElevenLabs; Notchtalk does not add any subscription layer), or none for Phonon-2
 - Permissions:
   - Microphone (to record)
   - Accessibility (for the global hotkey event tap and for auto-paste)
@@ -101,6 +102,12 @@ Use `./script/build_and_run.sh --verify` to launch and verify that the process s
 - While transcribing, you will see “Transcribing” or “Retrying (n/N)” in the pill UI.
 - On success, if **Auto-paste** is enabled, Notchtalk pastes at your cursor and shows “Pasted!” (your clipboard is restored immediately after).
 - If **Auto-paste** is disabled, Notchtalk copies the transcription to the clipboard and shows “Copied!”.
+
+## Phonon-2 On This Mac
+
+Settings -> Provider -> **Phonon-2** -> **Download and install** fetches everything once into `~/Library/Application Support/notchtalk/phonon` (about 1.4 GB): uv, a Python 3.12 runtime, the `fermion-research` engine and the 164 MB model. Nothing else on the Mac is touched; deleting that folder uninstalls it. Needs Apple silicon.
+
+Notchtalk then runs `fermion serve` on 127.0.0.1 and keeps the model warm; a recording starts it while you speak, and it stops after 15 idle minutes or when Notchtalk quits. A warm transcription takes about 0.1 s; a cold start about 15 s. The server log is `server.log` in the same folder.
 
 ## Voice Memos
 
