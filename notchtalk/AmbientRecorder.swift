@@ -169,7 +169,11 @@ final class AmbientRecorder {
                 try? await Task.sleep(for: .seconds(5))
                 guard let self, !Task.isCancelled else { return }
                 let now = ProcessInfo.processInfo.systemUptime
-                if now - max(self.buffer.lastAppend, started) > 5 { return self.restart("no audio for 5 s") }
+                if now - max(self.buffer.lastAppend, started) > 5 {
+                    // The window no longer reaches up to now; drop it rather than pass old audio off as recent.
+                    self.buffer.clear()
+                    return self.restart("no audio for 5 s")
+                }
             }
         }
     }

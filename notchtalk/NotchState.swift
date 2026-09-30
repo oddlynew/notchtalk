@@ -567,12 +567,12 @@ final class NotchStateManager {
 
     /// Transcribes a History entry in the background: any number at once, and the notch keeps
     /// recording and transcribing meanwhile. The transcript lands in History and on the clipboard;
-    /// it is pasted only when allowed and nothing is recording or transcribing in the notch.
+    /// only the ambient hotkey pastes it, and only while nothing is recording or transcribing in the notch.
     func retranscribe(
         diagnosticsID: UUID,
         audioDuration: TimeInterval? = nil,
         reason: String = "Manual re-transcribe requested",
-        allowPaste: Bool = true
+        allowPaste: Bool = false
     ) {
         guard !backgroundJobs.contains(diagnosticsID) else { return }
         guard let audioURL = diagnosticsStore.retainedAudioURL(for: diagnosticsID),
