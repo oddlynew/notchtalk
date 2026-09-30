@@ -49,7 +49,6 @@ struct SettingsView: View {
 
     @Bindable private var settingsManager = SettingsManager.shared
     @Bindable private var diagnosticsStore = TranscriptionDiagnosticsStore.shared
-    private var parakeetInstaller = ParakeetInstaller.shared
     @State private var apiKeyInput = ""
     @State private var showAPIKeyField = false
     @State private var saveError: String?
@@ -137,15 +136,16 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if settingsManager.transcriptionProvider == .parakeet {
+            if let model = settingsManager.transcriptionProvider.localModel {
                 Section {
-                    parakeetSection
+                    localModelSection(model.installer)
                 } header: {
-                    Text("Parakeet on this Mac")
+                    Text("\(model.name) on this Mac")
                 } footer: {
-                    Text("Audio never leaves this Mac and there is no key or bill. The first install puts about 2.8 GB (a Python runtime and the 2.3 GB model) into Application Support, and the model keeps about 3 GB of memory while Parakeet is selected. Needs Apple silicon. Parakeet-TDT 0.6B v3 by NVIDIA, CC BY 4.0.")
+                    Text(localModelFooter(model))
                         .foregroundStyle(.secondary)
                 }
+                .id(model)
             } else {
                 Section {
                     apiKeySection
@@ -746,9 +746,18 @@ struct SettingsView: View {
         }
     }
 
+    private func localModelFooter(_ model: LocalModel) -> String {
+        switch model {
+        case .parakeet:
+            "Audio never leaves this Mac and there is no key or bill. The first install puts about 2.8 GB (a Python runtime and the 2.3 GB model) into Application Support, and the model keeps about 3 GB of memory while Parakeet is selected. Needs Apple silicon. Parakeet-TDT 0.6B v3 by NVIDIA, CC BY 4.0."
+        case .phonon2:
+            "Audio never leaves this Mac and there is no key or bill. The first install puts about 1.4 GB (a Python runtime and the 164 MB model) into Application Support, and the model keeps about 2.5 GB of memory while Phonon-2 is selected. A 2-bit build of Parakeet: as fast, but it garbles German. Needs Apple silicon. Phonon-2 by Fermion Research, CC BY 4.0."
+        }
+    }
+
     @ViewBuilder
-    private var parakeetSection: some View {
-        switch parakeetInstaller.state {
+    private func localModelSection(_ installer: LocalModelInstaller) -> some View {
+        switch installer.state {
         case .installed:
             Label("Installed", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
@@ -761,16 +770,16 @@ struct SettingsView: View {
             HStack {
                 Text("Not installed")
                 Spacer()
-                Button("Download and install") { parakeetInstaller.install() }
+                Button("Download and install") { installer.install() }
                     .buttonStyle(.borderedProminent)
             }
-            if case .failed(let message) = parakeetInstaller.state {
+            if case .failed(let message) = installer.state {
                 Text(message)
                     .foregroundStyle(.red)
                     .font(.caption)
             }
         }
-        EmptyView().onAppear { parakeetInstaller.refresh() }
+        EmptyView().onAppear { installer.refresh() }
     }
 
     @ViewBuilder

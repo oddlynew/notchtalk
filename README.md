@@ -15,7 +15,7 @@ Notchtalk is intentionally small. It is not planned to be paid, and it is likely
   - Click the **pause button** in the pill to pause and resume a running recording.
   - Press **Esc** to cancel a recording immediately. A transcription still running after 10 seconds shows retry and cancel buttons in the pill. Cancelled audio remains available in History for 24 hours.
 - Shows a small “pill” UI near the notch/screen center while active.
-- Lets you choose OpenAI, ElevenLabs Scribe v2 or Parakeet on this Mac as the transcription provider.
+- Lets you choose OpenAI, ElevenLabs Scribe v2, or Parakeet or Phonon-2 on this Mac as the transcription provider.
 - Stores provider API keys separately in the macOS Keychain.
 - Can add speaker labels to ElevenLabs transcripts using optional speaker recognition.
 - Lets you set an optional “transcription prompt”.
@@ -30,6 +30,7 @@ Notchtalk keeps provider choices intentionally small:
 - OpenAI fallback (hedged): `gpt-4o-mini-transcribe`
 - ElevenLabs: `scribe_v2`, with optional speaker diarization
 - Parakeet (`nvidia/parakeet-tdt-0.6b-v3` via `mlx-community`, CC BY 4.0, 25 European languages): runs locally on Apple silicon, no key, audio stays on the Mac
+- Phonon-2 (`FermionResearch/Phonon-2`, CC BY 4.0): a 164 MB 2-bit build of the same model, as fast but it garbles German; also local
 
 There is a provider picker, but no model picker. The goal is “works well by default” rather than “a huge dropdown”.
 
@@ -37,7 +38,7 @@ There is a provider picker, but no model picker. The goal is “works well by de
 
 - macOS `26.2+` (current Xcode project deployment target)
 - Xcode (recent enough to build for macOS 26)
-- An API key for the selected provider (usage is billed by OpenAI or ElevenLabs; Notchtalk does not add any subscription layer), or none for Parakeet
+- An API key for the selected provider (usage is billed by OpenAI or ElevenLabs; Notchtalk does not add any subscription layer), or none for Parakeet and Phonon-2
 - Permissions:
   - Microphone (to record)
   - Accessibility (for the global hotkey event tap and for auto-paste)
@@ -53,7 +54,7 @@ There is a provider picker, but no model picker. The goal is “works well by de
      - If needed, change the **Bundle Identifier** to something unique.
 4. Select the `notchtalk` scheme and run.
 5. When prompted, grant Microphone permission. If the hotkey does not work, grant Accessibility permission.
-6. Open **Settings...** from the menu bar icon, choose a provider, and paste its API key. For Parakeet, click **Download and install** instead.
+6. Open **Settings...** from the menu bar icon, choose a provider, and paste its API key. For Parakeet or Phonon-2, click **Download and install** instead.
 
 ## Build A Release And Install To /Applications
 
@@ -103,11 +104,11 @@ Use `./script/build_and_run.sh --verify` to launch and verify that the process s
 - On success, if **Auto-paste** is enabled, Notchtalk pastes at your cursor and shows “Pasted!” (your clipboard is restored immediately after).
 - If **Auto-paste** is disabled, Notchtalk copies the transcription to the clipboard and shows “Copied!”.
 
-## Parakeet On This Mac
+## Parakeet And Phonon-2 On This Mac
 
-Settings -> Provider -> **Parakeet** -> **Download and install** fetches everything once into `~/Library/Application Support/notchtalk/parakeet` (about 2.8 GB): uv, a Python 3.12 runtime, `mlx-audio` and the 2.3 GB model. It is the full-precision model on purpose; the 2-bit Phonon-2 build of the same model garbled German. Nothing else on the Mac is touched; deleting that folder uninstalls it. Needs Apple silicon.
+Settings -> Provider -> **Parakeet** -> **Download and install** fetches everything once into `~/Library/Application Support/notchtalk/parakeet` (about 2.8 GB): uv, a Python 3.12 runtime, `mlx-audio` and the 2.3 GB model. It is the full-precision model; the 2-bit Phonon-2 build of the same model garbles German. **Phonon-2** installs the same way into `notchtalk/phonon` (about 1.4 GB, with Fermion's `fermion-research` engine and the 164 MB model). Nothing else on the Mac is touched; deleting a folder uninstalls that model. Needs Apple silicon.
 
-Notchtalk then runs a small model server on 127.0.0.1 and keeps the model warm (about 3 GB of memory) for as long as Parakeet is the provider: it starts when Notchtalk launches or you pick Parakeet, and stops when you pick another provider or quit. A warm transcription takes about 0.1 s; a cold start about 10 s. The server log is `server.log` in the same folder.
+Notchtalk then runs a small model server on 127.0.0.1 and keeps the selected model warm (about 3 GB of memory for Parakeet, 2.5 GB for Phonon-2) for as long as it is the provider: it starts when Notchtalk launches or you pick the model, and stops when you pick another provider or quit. A warm transcription takes about 0.1 s; a cold start about 10 s. The server log is `server.log` in the same folder.
 
 ## Voice Memos
 

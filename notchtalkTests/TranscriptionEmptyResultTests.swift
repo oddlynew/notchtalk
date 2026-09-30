@@ -96,8 +96,8 @@ struct TranscriptionEmptyResultTests {
         case .elevenLabs:
             let service = ElevenLabsTranscriptionService(apiKeyProvider: { "fixture" }, upload: upload)
             return try await service.transcribe(audioURL: audio, diarize: true)
-        case .parakeet:
-            preconditionFailure("Parakeet transcribes through a local server, not an injectable upload")
+        case .parakeet, .phonon2:
+            preconditionFailure("Local models transcribe through a local server, not an injectable upload")
         }
     }
 }
