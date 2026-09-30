@@ -8,7 +8,8 @@ import Foundation
 enum TranscriptionProvider: String, CaseIterable, Codable, Identifiable, Sendable {
     case openAI
     case elevenLabs
-    case phonon
+    // The raw value is from the first test build; saved settings and history already hold it.
+    case parakeet = "phonon"
 
     var id: String { rawValue }
 
@@ -18,8 +19,8 @@ enum TranscriptionProvider: String, CaseIterable, Codable, Identifiable, Sendabl
             return "OpenAI"
         case .elevenLabs:
             return "ElevenLabs"
-        case .phonon:
-            return "Phonon-2"
+        case .parakeet:
+            return "Parakeet"
         }
     }
 
@@ -29,17 +30,17 @@ enum TranscriptionProvider: String, CaseIterable, Codable, Identifiable, Sendabl
             return "openai-api-key"
         case .elevenLabs:
             return "elevenlabs-api-key"
-        case .phonon:
-            return "phonon-unused"
+        case .parakeet:
+            return "parakeet-unused"
         }
     }
 
-    /// A recording can go out: the provider's key is saved, or Phonon-2 is installed on this Mac.
+    /// A recording can go out: the provider's key is saved, or Parakeet is installed on this Mac.
     nonisolated var isReady: Bool {
-        self == .phonon ? PhononTranscriptionService.isInstalled : KeychainService.hasAPIKey(for: self)
+        self == .parakeet ? ParakeetTranscriptionService.isInstalled : KeychainService.hasAPIKey(for: self)
     }
 
     nonisolated var notReadyMessage: String {
-        self == .phonon ? "Install Phonon-2" : "No API key"
+        self == .parakeet ? "Install Parakeet" : "No API key"
     }
 }

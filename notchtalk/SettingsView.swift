@@ -49,7 +49,7 @@ struct SettingsView: View {
 
     @Bindable private var settingsManager = SettingsManager.shared
     @Bindable private var diagnosticsStore = TranscriptionDiagnosticsStore.shared
-    private var phononInstaller = PhononInstaller.shared
+    private var parakeetInstaller = ParakeetInstaller.shared
     @State private var apiKeyInput = ""
     @State private var showAPIKeyField = false
     @State private var saveError: String?
@@ -137,13 +137,13 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if settingsManager.transcriptionProvider == .phonon {
+            if settingsManager.transcriptionProvider == .parakeet {
                 Section {
-                    phononSection
+                    parakeetSection
                 } header: {
-                    Text("Phonon-2 on this Mac")
+                    Text("Parakeet on this Mac")
                 } footer: {
-                    Text("Audio never leaves this Mac and there is no key or bill. The first install puts about 1.4 GB (a Python runtime and the 164 MB model) into Application Support. Needs Apple silicon. Model by Fermion Research, CC BY 4.0.")
+                    Text("Audio never leaves this Mac and there is no key or bill. The first install puts about 2.8 GB (a Python runtime and the 2.3 GB model) into Application Support, and the model keeps about 3 GB of memory while Parakeet is selected. Needs Apple silicon. Parakeet-TDT 0.6B v3 by NVIDIA, CC BY 4.0.")
                         .foregroundStyle(.secondary)
                 }
             } else {
@@ -747,8 +747,8 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private var phononSection: some View {
-        switch phononInstaller.state {
+    private var parakeetSection: some View {
+        switch parakeetInstaller.state {
         case .installed:
             Label("Installed", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
@@ -761,16 +761,16 @@ struct SettingsView: View {
             HStack {
                 Text("Not installed")
                 Spacer()
-                Button("Download and install") { phononInstaller.install() }
+                Button("Download and install") { parakeetInstaller.install() }
                     .buttonStyle(.borderedProminent)
             }
-            if case .failed(let message) = phononInstaller.state {
+            if case .failed(let message) = parakeetInstaller.state {
                 Text(message)
                     .foregroundStyle(.red)
                     .font(.caption)
             }
         }
-        EmptyView().onAppear { phononInstaller.refresh() }
+        EmptyView().onAppear { parakeetInstaller.refresh() }
     }
 
     @ViewBuilder
