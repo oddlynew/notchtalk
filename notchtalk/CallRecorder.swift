@@ -141,10 +141,12 @@ final class CallRecorder {
         handOff = Task {
             // People often dictate right after hanging up; the call waits its turn instead of failing, in memory,
             // so a quit while it waits leaves nothing behind. Calls queue behind each other the same way.
-            await previous?.value
-            while [.recording, .processing].contains(NotchStateManager.shared.state) {
-                try? await Task.sleep(for: .seconds(1))
+            // Busy also covers a dropped file or voice memo still being read, so the call never overtakes one.
+            @MainActor func waitForTurn() async {
+                while FileDrop.shared.isBusy { try? await Task.sleep(for: .seconds(1)) }
             }
+            await previous?.value
+            await waitForTurn()
             await AudioFileTranscription.run(
                 source: name,
                 label: "Call, \(Int((seconds / 60).rounded(.up))) min",
@@ -153,6 +155,8 @@ final class CallRecorder {
             ) { url in
                 // Mixing an hour of audio takes a moment, so it stays off the main thread.
                 try await Task.detached { try AmbientRecorder.encode(Self.mix(mic, remote), to: url) }.value
+                // Something may have started while mixing; run starts the transcription right after this returns.
+                await waitForTurn()
             }
         }
     }

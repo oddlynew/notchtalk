@@ -243,7 +243,7 @@ struct SettingsView: View {
             } header: {
                 Text("Calls")
             } footer: {
-                Text("When an iPhone call or a FaceTime call runs on this Mac, Notchtalk records both sides: your microphone and the other person. The notch shows a red dot while it records. When the call ends, the recording is transcribed like a voice memo, lands in History and on the clipboard, and its audio is kept for 24 hours. Turning this off during a call or quitting discards that call.")
+                Text("When an iPhone call or a FaceTime call runs on this Mac, Notchtalk records both sides: your microphone and the other person. The pill at the bottom of the screen shows a red dot while it records. When the call ends, the recording is transcribed like a voice memo, lands in History and on the clipboard, and its audio is kept for 24 hours. Turning this off during a call or quitting discards that call.")
                     .foregroundStyle(.secondary)
             }
         }
