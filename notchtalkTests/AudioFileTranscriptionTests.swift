@@ -12,7 +12,7 @@ struct AudioFileTranscriptionTests {
         }
     }
 
-    @MainActor @Test func aRejectedDropEndsTheHoverAndShowsAgainOnTheNextDrop() {
+    @MainActor @Test func aRejectedDropEndsTheHoverShowsAgainOnTheNextDropAndSettles() {
         let drop = FileDrop.shared
         drop.hovering = true
         let pdf = URL(fileURLWithPath: "/tmp/notes.pdf")
@@ -22,6 +22,8 @@ struct AudioFileTranscriptionTests {
         let attempts = drop.attempts
         drop.transcribe([pdf])
         #expect(drop.attempts == attempts + 1)
+        drop.settle()
+        #expect(drop.status == .idle)
     }
 
     @Test func exportsWavAsM4AWithTheSameLength() async throws {
