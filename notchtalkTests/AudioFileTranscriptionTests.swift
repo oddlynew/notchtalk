@@ -12,6 +12,18 @@ struct AudioFileTranscriptionTests {
         }
     }
 
+    @MainActor @Test func aRejectedDropEndsTheHoverAndShowsAgainOnTheNextDrop() {
+        let drop = FileDrop.shared
+        drop.hovering = true
+        let pdf = URL(fileURLWithPath: "/tmp/notes.pdf")
+        #expect(!drop.transcribe([pdf]))
+        #expect(!drop.hovering)
+        #expect(drop.status == .failed("notes.pdf has no sound to transcribe. Try an audio or video file."))
+        let attempts = drop.attempts
+        drop.transcribe([pdf])
+        #expect(drop.attempts == attempts + 1)
+    }
+
     @Test func exportsWavAsM4AWithTheSameLength() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
