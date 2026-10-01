@@ -6,7 +6,6 @@ struct NotchtalkMenu: View {
     private let manager = NotchStateManager.shared
     @Bindable private var settings = SettingsManager.shared
     private let ambient = AmbientRecorder.shared
-    private let drop = FileDrop.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -68,8 +67,6 @@ struct NotchtalkMenu: View {
         }
         .padding(20).frame(width: 330)
         .tint(NotchtalkStyle.accent)
-        .onAppear { drop.menuOpen = true }
-        .onDisappear { drop.menuOpen = false }
     }
     private func shortcut(_ key: String, detail: String) -> some View {
         HStack {
@@ -95,13 +92,13 @@ struct NotchtalkMenu: View {
     }
 }
 
-/// Shows the latest transcript and takes a dropped audio or video file, which goes the way of a voice memo.
+/// Shows the latest transcript and how a file dropped on the notch fares. The panel takes no drop
+/// itself: it closes as soon as a drag from Finder moves focus away.
 @MainActor
 struct LatestTranscriptCard: View {
     private let manager = NotchStateManager.shared
     private let drop = FileDrop.shared
     @State private var copied = false
-    @State var dropTargeted = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -123,37 +120,21 @@ struct LatestTranscriptCard: View {
             .disabled(manager.latestTranscript == nil)
         }
         .padding(14)
-        .background(dropTargeted ? AnyShapeStyle(NotchtalkStyle.accent.opacity(0.10)) : AnyShapeStyle(.primary.opacity(0.025)), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(dropTargeted ? AnyShapeStyle(NotchtalkStyle.accent) : AnyShapeStyle(.primary.opacity(0.055)), lineWidth: dropTargeted ? 1.5 : 1))
-        .overlay {
-            if dropTargeted {
-                VStack(spacing: 6) {
-                    Image(systemName: "arrow.down.doc.fill").font(.system(size: 22))
-                    Text(drop.isBusy ? "Busy, drop again in a moment" : "Drop to transcribe").font(.system(size: 12, weight: .semibold))
-                }
-                .foregroundStyle(NotchtalkStyle.accent)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(NotchtalkStyle.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(NotchtalkStyle.accent, style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])))
-                .transition(.opacity)
-            }
-        }
-        .scaleEffect(dropTargeted && !reduceMotion ? 1.02 : 1)
-        .animation(reduceMotion ? .easeOut(duration: 0.12) : .spring(duration: 0.28, bounce: 0.25), value: dropTargeted)
-        .dropDestination(for: URL.self) { urls, _ in
-            drop.transcribe(urls)
-        } isTargeted: { dropTargeted = $0 }
+        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055)))
         .onChange(of: manager.latestTranscript) { _, _ in copied = false }
     }
-    /// A quiet dashed slot that says the card takes files; it shows reading, progress and failures too.
+    /// Says where files go, then shows reading, progress, the result and failures.
     @ViewBuilder private var dropSlot: some View {
         let status = drop.status
         HStack(spacing: 8) {
             switch status {
             case .idle:
-                Image(systemName: "arrow.down.doc").foregroundStyle(.secondary)
-                Text("Drop an audio or video file to transcribe").foregroundStyle(.secondary)
+                Image(systemName: "arrow.up.doc").foregroundStyle(.secondary)
+                Text("Drag an audio or video file onto the notch to transcribe it").foregroundStyle(.secondary)
+            case .done(let name):
+                Image(systemName: "doc.on.clipboard").foregroundStyle(NotchtalkStyle.accent)
+                Text("Transcript of \(name) copied").lineLimit(1).truncationMode(.middle)
             case .reading(let name), .transcribing(let name):
                 if reduceMotion {
                     Image(systemName: "hourglass").foregroundStyle(NotchtalkStyle.accent)
@@ -171,7 +152,7 @@ struct LatestTranscriptCard: View {
         .font(.system(size: 11))
         .padding(.horizontal, 10).padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
         .accessibilityElement(children: .combine)
     }
 }
