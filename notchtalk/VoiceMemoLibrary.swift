@@ -93,8 +93,7 @@ final class VoiceMemoLibrary {
 
     /// Sends a memo through the shared file path; the transcript lands in History and on the clipboard.
     func transcribe(_ memo: VoiceMemo) {
-        let notch = NotchStateManager.shared
-        guard notch.state != .recording, notch.state != .processing, preparing.isEmpty else { return }
+        guard !FileDrop.shared.isBusy else { return }
         preparing.insert(memo.id)
         Task {
             defer { self.preparing.remove(memo.id) }
@@ -264,7 +263,7 @@ struct VoiceMemosView: View {
                 }
             } else {
                 Button("Transcribe") { library.transcribe(memo) }
-                    .disabled(notch.state == .recording || notch.state == .processing || !library.preparing.isEmpty || !SettingsManager.shared.hasAPIKey)
+                    .disabled(FileDrop.shared.isBusy || !SettingsManager.shared.hasAPIKey)
             }
         }
         .padding(.vertical, 4)

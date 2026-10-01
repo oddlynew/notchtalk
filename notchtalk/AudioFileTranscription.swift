@@ -67,10 +67,15 @@ enum AudioFileTranscription {
 
     /// Writes the sound of any file AVFoundation plays (m4a, mp3, wav, aiff, a video's audio track)
     /// as .m4a, the format every provider takes and the recorder writes. m4a is copied as it is.
-    nonisolated static func exportAudio(of source: URL, to destination: URL) async throws {
-        if source.pathExtension.lowercased() == "m4a" {
-            try FileManager.default.copyItem(at: source, to: destination)
-            return
+    static func exportAudio(of source: URL, to destination: URL) async throws {
+        switch source.pathExtension.lowercased() {
+        case "m4a":
+            return try FileManager.default.copyItem(at: source, to: destination)
+        case "qta":
+            // A Spatial Audio voice memo dragged out of Finder goes the way the Voice Memos list sends it.
+            return try await VoiceMemoLibrary.exportStereoTrack(of: source, to: destination)
+        default:
+            break
         }
         let asset = AVURLAsset(url: source)
         guard try await !asset.loadTracks(withMediaType: .audio).isEmpty else {
@@ -127,7 +132,7 @@ final class FileDrop {
 
     var isBusy: Bool {
         let notch = NotchStateManager.shared.state
-        return reading || notch == .recording || notch == .processing
+        return reading || !VoiceMemoLibrary.shared.preparing.isEmpty || notch == .recording || notch == .processing
     }
 
     /// Takes the first dropped file. Returns false when nothing was started.
