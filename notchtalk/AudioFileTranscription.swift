@@ -125,9 +125,11 @@ final class FileDrop {
     var status: Status {
         if let rejection { return .failed(rejection) }
         if reading { return .reading(name) }
-        if let outcome { return outcome }
-        return entry.map(status(of:)) ?? .idle
+        return run
     }
+
+    /// The dropped file's own run, also while a rejection covers it.
+    var run: Status { outcome ?? entry.map(status(of:)) ?? .idle }
 
     private var entry: TranscriptionDiagnosticsEntry? {
         entryID.flatMap { id in TranscriptionDiagnosticsStore.shared.entries.first { $0.id == id } }
@@ -189,10 +191,9 @@ final class FileDrop {
         entryID = nil
     }
 
-    /// Forgets a shown result or rejection. A run still going on shows again.
+    /// Forgets the shown rejection, or else the shown result. A run behind a rejection shows next.
     func settle() {
-        rejection = nil
-        outcome = nil
+        if rejection != nil { rejection = nil } else { outcome = nil }
     }
 
     private func reject(_ message: String) -> Bool {
@@ -290,7 +291,7 @@ final class NotchDropTarget {
 
     private func observe() {
         let drop = FileDrop.shared
-        withObservationTracking { _ = (drop.status, drop.hovering, drop.attempts, activeScreen) } onChange: { [weak self] in
+        withObservationTracking { _ = (drop.status, drop.run, drop.hovering, drop.attempts, activeScreen) } onChange: { [weak self] in
             Task { @MainActor [weak self] in self?.observe() }
         }
         update()
