@@ -121,7 +121,7 @@ final class FileDrop {
         case .recording, .pending: return .transcribing(name)
         case .succeeded, .cancelled: return .idle
         // History keeps the details; the menu says it in plain words.
-        case .failed: return .failed("Couldn't transcribe \(name). Details and retry in History.")
+        case .failed: return .failed("Couldn't transcribe \(name). Details are in History.")
         }
     }
 
@@ -169,14 +169,21 @@ final class StatusItemDropTarget: NSObject, NSWindowDelegate, NSDraggingDestinat
     static let shared = StatusItemDropTarget()
     private weak var window: NSWindow?
 
+    /// The status window appears only after launch finishes, so this looks for it a few times.
     func install() {
-        // MenuBarExtra keeps its status item in an NSStatusBarWindow that has no delegate of its own.
-        guard window == nil,
-              let window = NSApp.windows.first(where: { $0.className == "NSStatusBarWindow" }),
-              window.delegate == nil else { return }
-        window.registerForDraggedTypes([.fileURL])
-        window.delegate = self
-        self.window = window
+        Task {
+            for _ in 0..<50 where window == nil {
+                // MenuBarExtra keeps its status item in an NSStatusBarWindow that has no delegate of its own.
+                if let window = NSApp.windows.first(where: { $0.className == "NSStatusBarWindow" }) {
+                    guard window.delegate == nil else { return }
+                    window.registerForDraggedTypes([.fileURL])
+                    window.delegate = self
+                    self.window = window
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
     }
 
     func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
