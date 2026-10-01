@@ -131,7 +131,7 @@ struct LatestTranscriptCard: View {
             switch status {
             case .idle:
                 Image(systemName: "arrow.up.doc").foregroundStyle(.secondary)
-                Text("Drag an audio or video file onto the notch to transcribe it").foregroundStyle(.secondary)
+                Text("Drag an audio or video file onto \(NSScreen.screens.contains { $0.safeAreaInsets.top > 0 } ? "the notch" : "the middle of the menu bar") to transcribe it").foregroundStyle(.secondary)
             case .done(let name):
                 Image(systemName: "doc.on.clipboard").foregroundStyle(NotchtalkStyle.accent)
                 Text("Transcript of \(name) copied").lineLimit(1).truncationMode(.middle)

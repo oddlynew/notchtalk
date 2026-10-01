@@ -172,6 +172,17 @@ final class FileDrop {
         transcribe(sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? [])
     }
 
+    /// Forgets a shown result, so a later retry from History is not reported as this drop.
+    func settle() {
+        guard !reading else { return }
+        switch status {
+        case .done, .failed:
+            entryID = nil
+            rejection = nil
+        default: break
+        }
+    }
+
     private func reject(_ message: String) -> Bool {
         rejection = message
         return false
@@ -197,6 +208,8 @@ final class NotchDropTarget {
     @ObservationIgnored private var showsResult = false
     @ObservationIgnored private var resultTask: Task<Void, Never>?
     @ObservationIgnored private var closeTask: Task<Void, Never>?
+    /// Set while the left button is down, the only time a file can be dragged.
+    @ObservationIgnored private var takesMouse = false
 
     private static let openSize = CGSize(width: 360, height: 84)
 
@@ -205,7 +218,25 @@ final class NotchDropTarget {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in Task { @MainActor [weak self] in self?.makePanels() } }
+        // The windows let clicks through to the menu bar until a drag may have started in another app.
+        NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { _ in
+            Task { @MainActor in NotchDropTarget.shared.mouseDragged() }
+        }
         observe()
+    }
+
+    private func mouseDragged() {
+        guard !takesMouse else { return }
+        setTakesMouse(true)
+        Task {
+            while NSEvent.pressedMouseButtons & 1 != 0 { try? await Task.sleep(for: .milliseconds(200)) }
+            setTakesMouse(false)
+        }
+    }
+
+    private func setTakesMouse(_ takes: Bool) {
+        takesMouse = takes
+        panels.forEach { $0.panel.ignoresMouseEvents = !takes }
     }
 
     /// A file hovers over the notch of this screen.
@@ -229,6 +260,7 @@ final class NotchDropTarget {
             panel.hasShadow = false
             panel.hidesOnDeactivate = false
             panel.animationBehavior = .none
+            panel.ignoresMouseEvents = !takesMouse
             let container = NotchDropView.Container(frame: .zero)
             let hosting = NSHostingView(rootView: NotchDropView(target: self, screen: screen.frame, notchHeight: notch.height))
             hosting.autoresizingMask = [.width, .height]
@@ -264,6 +296,7 @@ final class NotchDropTarget {
                     try? await Task.sleep(for: .seconds(4))
                     guard !Task.isCancelled, let self else { return }
                     showsResult = false
+                    FileDrop.shared.settle()
                     update()
                 }
             default:
@@ -278,8 +311,8 @@ final class NotchDropTarget {
     }
 
     private func setOpen(_ open: Bool) {
-        closeTask?.cancel()
         if open {
+            closeTask?.cancel()
             if !isOpen { isOpen = true }
             place()
         } else if isOpen {
@@ -327,7 +360,7 @@ struct NotchDropView: View {
 
     var body: some View {
         // The window server sends drags through fully clear pixels, so the waiting window and the
-        // hovered zone keep a trace of color. A result lets clicks through around its box.
+        // hovered zone keep a trace of color. Around a shown result the window stays fully clear.
         Color.black.opacity(!isOpen || drop.hovering ? 0.01 : 0)
             .overlay(alignment: .top) {
                 if isOpen {
