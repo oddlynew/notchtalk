@@ -41,6 +41,8 @@ final class CallRecorder {
     @ObservationIgnored private var session = 0
     /// Samples of silence in front of the other side: its tap starts after the microphone.
     @ObservationIgnored private var remoteLead = 0
+    /// The last finished call on its way to History; the next one waits for it.
+    @ObservationIgnored private var handOff: Task<Void, Never>?
 
     var isRecording: Bool { startedAt != nil }
 
@@ -97,6 +99,9 @@ final class CallRecorder {
                 problem = Self.micProblem
                 NSLog("Call: microphone failed to start: \(error.localizedDescription)")
             }
+        } else {
+            problem = Self.micProblem
+            NSLog("Call: the microphone has no usable format")
         }
         let micStarted = DispatchTime.now().uptimeNanoseconds
         do {
@@ -132,7 +137,14 @@ final class CallRecorder {
         let seconds = Double(max(mic.count, remote.count)) / Double(AmbientBuffer.sampleRate)
         let name = FileManager.default.temporaryDirectory
             .appendingPathComponent("notchtalk_call_\(Int(startedAt.timeIntervalSince1970)).m4a")
-        Task {
+        let previous = handOff
+        handOff = Task {
+            // People often dictate right after hanging up; the call waits its turn instead of failing, in memory,
+            // so a quit while it waits leaves nothing behind. Calls queue behind each other the same way.
+            await previous?.value
+            while [.recording, .processing].contains(NotchStateManager.shared.state) {
+                try? await Task.sleep(for: .seconds(1))
+            }
             await AudioFileTranscription.run(
                 source: name,
                 label: "Call, \(Int((seconds / 60).rounded(.up))) min",
@@ -141,11 +153,6 @@ final class CallRecorder {
             ) { url in
                 // Mixing an hour of audio takes a moment, so it stays off the main thread.
                 try await Task.detached { try AmbientRecorder.encode(Self.mix(mic, remote), to: url) }.value
-                // People often dictate right after hanging up; the call waits its turn instead of failing.
-                // Nothing suspends between here and the transcription start, so two waiting calls take turns too.
-                while [.recording, .processing].contains(NotchStateManager.shared.state) {
-                    try? await Task.sleep(for: .seconds(1))
-                }
             }
         }
     }
