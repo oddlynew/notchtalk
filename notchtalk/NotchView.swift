@@ -8,9 +8,11 @@ import SwiftUI
 @MainActor
 struct NotchView: View {
     let stateManager: NotchStateManager
+    private let call = CallRecorder.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var isActive: Bool {
-        stateManager.state != .idle
+        stateManager.state != .idle || call.isRecording
     }
 
     private var contentWidth: CGFloat {
@@ -58,7 +60,7 @@ struct NotchView: View {
                             }
                             .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
                     )
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -72,7 +74,9 @@ struct NotchView: View {
     private var pillContent: some View {
         switch stateManager.state {
         case .idle:
-            EmptyView()
+            if let startedAt = call.startedAt {
+                CallIndicator(startedAt: startedAt)
+            }
 
         case .recording, .processing:
             CaptureContent(stateManager: stateManager)
@@ -94,6 +98,28 @@ struct NotchView: View {
 }
 
 // MARK: - Supporting Views
+
+/// Says that a call is being recorded. Steady on purpose: no pulse, so it never distracts and needs no reduced-motion variant.
+private struct CallIndicator: View {
+    let startedAt: Date
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(Color(red: 0.95, green: 0.33, blue: 0.31))
+                .frame(width: 8, height: 8)
+            Text("Recording call")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white)
+            Text(startedAt, style: .timer)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.7))
+                .monospacedDigit()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Recording call")
+    }
+}
 
 /// One gentle confirmation, with no looping animation or additional timer.
 private struct CompletionMark: View {

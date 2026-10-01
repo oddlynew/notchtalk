@@ -6,6 +6,7 @@ struct NotchtalkMenu: View {
     private let manager = NotchStateManager.shared
     @Bindable private var settings = SettingsManager.shared
     private let ambient = AmbientRecorder.shared
+    private let call = CallRecorder.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -41,6 +42,12 @@ struct NotchtalkMenu: View {
                         }
                     }
                 }
+            }
+            Toggle("Record calls", isOn: $settings.callRecordingEnabled)
+                .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
+            if settings.callRecordingEnabled {
+                Text(callStatus).font(.caption).foregroundStyle(call.problem == nil ? .secondary : Color.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             VStack(spacing: 9) {
                 shortcut("Press right ⌘", detail: "Start recording")
@@ -80,6 +87,10 @@ struct NotchtalkMenu: View {
             return controller.hasMicrophonePermission ? "Not listening, the microphone did not start" : "Needs microphone access"
         }
         return "Listening. Keeps the last \(settings.ambientWindowMinutes) min, only on this Mac."
+    }
+    private var callStatus: String {
+        if call.isRecording { return "Recording this call. The transcript lands in History when it ends." }
+        return call.problem ?? "Records both sides of calls on this Mac, iPhone calls and FaceTime."
     }
     private var status: String {
         switch manager.state {

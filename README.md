@@ -120,6 +120,20 @@ macOS protects that folder, so Notchtalk needs Full Disk Access once: System Set
 
 Drag an audio or video file (m4a, mp3, wav, aiff, mp4, mov and anything else macOS plays) onto the notch; nothing has to be open first. On a screen without a notch, drag it onto the middle of the menu bar. A drop zone opens below the notch while the file hovers, then shows reading, transcribing and the result, and closes a few seconds later. The file goes the same way as a voice memo: the selected provider, the same retries and timeouts, an entry in History and the transcript on the clipboard, never pasted. Its sound is sent as `.m4a`; your file stays where it is. The menu bar panel shows the same status under **Latest transcript**, but takes no drop: it closes as soon as a drag from Finder moves focus away. The menu bar icon takes no drop either, because macOS 26 does not hand it drag events.
 
+## Recording Calls
+
+Turn on **Record calls** in the menu or under Settings -> Calls (off by default). From then on, every call that runs on this Mac is recorded on both sides: iPhone calls taken or placed on the Mac through Continuity, and FaceTime calls. Notchtalk notices the call by itself: it starts as soon as Apple's call process reads the microphone and ends 4 seconds after it lets go, so there is no shortcut to press. While it records, the notch shows a red dot with **Recording call** and the call's clock, and the menu bar icon turns into a phone.
+
+When the call ends, your microphone and the other side are mixed into one track and go the way of a voice memo: the selected provider, an entry in History labelled "Call, N min", the transcript on the clipboard, and the audio kept for 24 hours. A call that ends while you are dictating waits in History with its audio. Turning the setting off during a call or quitting discards that call; until the call ends, both sides live only in memory.
+
+The other side comes from a Core Audio process tap on Apple's call processes (`avconferenced`, `TelephonyUtilities`, FaceTime, Phone), which needs the system audio permission once: turning the setting on asks for it; otherwise System Settings -> Privacy & Security -> Screen & System Audio Recording -> turn on `notchtalk`. Without it the tap hears silence, the call keeps only your side, and the menu says so. Calls on the iPhone itself, without the Mac, are not recorded.
+
+`scripts/verify_call_capture.swift` plays a quiet test tone and checks that the app's tap hears exactly that process (needs the system audio permission for the terminal, takes about 5 seconds):
+
+```bash
+swiftc -parse-as-library -O scripts/verify_call_capture.swift notchtalk/ProcessTap.swift notchtalk/AmbientRecorder.swift -o .build/verify_call && .build/verify_call
+```
+
 ## History & Diagnostics
 
 Settings -> History shows recordings from their start onward, including the stop/cancel trigger, transcript text, and per-run log events such as retries and errors. Exports:

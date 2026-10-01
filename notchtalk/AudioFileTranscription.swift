@@ -52,15 +52,16 @@ enum AudioFileTranscription {
         if let readError {
             return fail("Could not read the audio: \(readError.localizedDescription)")
         }
+        // Kept before anything else can fail: a call recording exists nowhere else, so History can retry it.
+        guard store.retainAudio(sourceURL: copy, for: id) != nil else {
+            return fail("Could not keep a copy of the audio")
+        }
         guard notch.state != .recording, notch.state != .processing else {
-            return fail("Notchtalk was busy with another recording; transcribe the file again")
+            return fail("Notchtalk was busy with another recording; transcribe it again from History")
         }
         // The notch's own missing-key path would leave this entry pending.
         guard provider.isReady else {
             return fail(provider.localModel != nil ? provider.notReadyMessage : "No API key for \(provider.displayName)")
-        }
-        guard store.retainAudio(sourceURL: copy, for: id) != nil else {
-            return fail("Could not keep a copy of the audio")
         }
         notch.retranscribe(diagnosticsID: id, audioDuration: duration, reason: reason, allowPaste: false)
         return id

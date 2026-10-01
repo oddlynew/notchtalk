@@ -237,6 +237,15 @@ struct SettingsView: View {
                 Text("Ambient mode listens all the time and keeps only the last minutes in memory. Nothing is saved or sent until you ask for a transcript from the menu or with the shortcut. Turning it off or quitting discards the audio at once. Normal recordings work as usual alongside it. With AirPods or another Bluetooth headset as input, ambient mode listens through the Mac's built-in microphone, so your headset keeps its full sound quality.")
                     .foregroundStyle(.secondary)
             }
+
+            Section {
+                Toggle("Record calls on this Mac", isOn: $settingsManager.callRecordingEnabled)
+            } header: {
+                Text("Calls")
+            } footer: {
+                Text("When an iPhone call or a FaceTime call runs on this Mac, Notchtalk records both sides: your microphone and the other person. The notch shows a red dot while it records. When the call ends, the recording is transcribed like a voice memo, lands in History and on the clipboard, and its audio is kept for 24 hours. Turning this off during a call or quitting discards that call.")
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onChange(of: settingsManager.transcriptionProvider) {
