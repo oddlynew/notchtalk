@@ -119,13 +119,21 @@ final class FileDrop {
     private var reading = false
     private var entryID: UUID?
     private var rejection: String?
+    /// How the dropped file's own run ended, kept apart from later retries of its History entry.
+    private var outcome: Status?
 
     var status: Status {
         if let rejection { return .failed(rejection) }
         if reading { return .reading(name) }
-        guard let entryID, let entry = TranscriptionDiagnosticsStore.shared.entries.first(where: { $0.id == entryID }) else {
-            return .idle
-        }
+        if let outcome { return outcome }
+        return entry.map(status(of:)) ?? .idle
+    }
+
+    private var entry: TranscriptionDiagnosticsEntry? {
+        entryID.flatMap { id in TranscriptionDiagnosticsStore.shared.entries.first { $0.id == id } }
+    }
+
+    private func status(of entry: TranscriptionDiagnosticsEntry) -> Status {
         switch entry.status {
         case .recording, .pending: return .transcribing(name)
         case .succeeded: return .done(name)
@@ -154,6 +162,7 @@ final class FileDrop {
         guard !isBusy else { return reject("Notchtalk is busy. Drop the file again when it's done.") }
         name = url.lastPathComponent
         entryID = nil
+        outcome = nil
         reading = true
         Task {
             let duration = try? await AVURLAsset(url: url).load(.duration).seconds
@@ -172,15 +181,18 @@ final class FileDrop {
         transcribe(sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? [])
     }
 
-    /// Forgets a shown result, so a later retry from History is not reported as this drop.
+    /// Stops following the History entry once its run ends, so a retry from History, which may
+    /// paste instead of copy, is not reported as this drop.
+    func freeze() {
+        guard let entry, entry.status != .recording, entry.status != .pending else { return }
+        outcome = status(of: entry)
+        entryID = nil
+    }
+
+    /// Forgets a shown result or rejection. A run still going on shows again.
     func settle() {
-        guard !reading else { return }
-        switch status {
-        case .done, .failed:
-            entryID = nil
-            rejection = nil
-        default: break
-        }
+        rejection = nil
+        outcome = nil
     }
 
     private func reject(_ message: String) -> Bool {
@@ -229,7 +241,8 @@ final class NotchDropTarget {
         guard !takesMouse else { return }
         setTakesMouse(true)
         Task {
-            while NSEvent.pressedMouseButtons & 1 != 0 { try? await Task.sleep(for: .milliseconds(200)) }
+            // A short poll, so a click right after the release already reaches the menu bar.
+            while NSEvent.pressedMouseButtons & 1 != 0 { try? await Task.sleep(for: .milliseconds(30)) }
             setTakesMouse(false)
         }
     }
@@ -285,6 +298,7 @@ final class NotchDropTarget {
 
     private func update() {
         let drop = FileDrop.shared
+        drop.freeze()
         let status = drop.status
         if status != shown.status || drop.attempts != shown.attempts {
             shown = (status, drop.attempts)
