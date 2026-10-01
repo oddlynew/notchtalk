@@ -116,6 +116,10 @@ History & settings -> Voice Memos lists the recordings of Apple's Voice Memos ap
 
 macOS protects that folder, so Notchtalk needs Full Disk Access once: System Settings -> Privacy & Security -> Full Disk Access -> turn on `notchtalk`, then quit and reopen it. The stable signing identity keeps the grant across rebuilds.
 
+## Dropping A File
+
+Drag an audio or video file (m4a, mp3, wav, aiff, mp4, mov and anything else macOS plays) onto **Latest transcript** in the menu bar panel. The card lights up while the file hovers over it. The file goes the same way as a voice memo: the selected provider, the same retries and timeouts, an entry in History and the transcript on the clipboard, never pasted. Its sound is sent as `.m4a`; your file stays where it is. Dragging a file onto the menu bar icon opens the panel, and dropping right on the icon works too.
+
 ## History & Diagnostics
 
 Settings -> History shows recordings from their start onward, including the stop/cancel trigger, transcript text, and per-run log events such as retries and errors. Exports:

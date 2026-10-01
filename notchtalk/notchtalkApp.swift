@@ -40,6 +40,10 @@ final class AppController {
     init() {
         windowController = NotchWindowController(stateManager: stateManager)
         windowController?.setup()
+        // The status item exists once launching finishes.
+        NotificationCenter.default.addObserver(forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { StatusItemDropTarget.shared.install() }
+        }
 
         HotKeyManager.shared.onToggle = { [weak self] in
             guard let self else { return }
