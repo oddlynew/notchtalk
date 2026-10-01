@@ -20,8 +20,9 @@ final class CallRecorder {
         "com.apple.avconferenced", "com.apple.TelephonyUtilities", "com.apple.FaceTime", "com.apple.Phone"
     ]
     /// A route change or a short gap in the microphone must not split one call in two.
-    static let hangUpGrace: TimeInterval = 4
+    static let hangUpGrace: Duration = .seconds(4)
     static let tapProblem = "The last call has only your side. To record the other side, allow Notchtalk under System Settings → Privacy & Security → Screen & System Audio Recording."
+    static let micProblem = "The last call has only the other side. The microphone didn't start; check that it's connected and allowed for Notchtalk."
     /// A tap without the system audio permission hears only silence, but so does one on a caller who never spoke.
     static let silentProblem = "The other side of the last call was silent. If they spoke, allow Notchtalk under System Settings → Privacy & Security → Screen & System Audio Recording."
 
@@ -56,7 +57,7 @@ final class CallRecorder {
         // Asks for the system audio permission now rather than in the middle of the first call.
         ProcessTap.requestPermission()
         watchTask = Task { [weak self] in
-            var quietSince: Date?
+            var quietSince: ContinuousClock.Instant?
             while !Task.isCancelled {
                 guard let self else { return }
                 let processes = ProcessTap.audioProcesses().filter { Self.callProcesses.contains($0.bundleID) }
@@ -64,9 +65,9 @@ final class CallRecorder {
                     quietSince = nil
                     if !self.isRecording { self.start(tapping: processes.map(\.id)) }
                 } else if self.isRecording {
-                    let since = quietSince ?? Date()
+                    let since = quietSince ?? .now
                     quietSince = since
-                    if Date().timeIntervalSince(since) >= Self.hangUpGrace { self.finish() }
+                    if ContinuousClock.now - since >= Self.hangUpGrace { self.finish() }
                 }
                 try? await Task.sleep(for: .seconds(1))
             }
@@ -93,6 +94,7 @@ final class CallRecorder {
                 micEngine = engine
             } catch {
                 input.removeTap(onBus: 0)
+                problem = Self.micProblem
                 NSLog("Call: microphone failed to start: \(error.localizedDescription)")
             }
         }
@@ -131,10 +133,6 @@ final class CallRecorder {
         let name = FileManager.default.temporaryDirectory
             .appendingPathComponent("notchtalk_call_\(Int(startedAt.timeIntervalSince1970)).m4a")
         Task {
-            // People often dictate right after hanging up; the call waits its turn instead of failing.
-            while [.recording, .processing].contains(NotchStateManager.shared.state) {
-                try? await Task.sleep(for: .seconds(1))
-            }
             await AudioFileTranscription.run(
                 source: name,
                 label: "Call, \(Int((seconds / 60).rounded(.up))) min",
@@ -143,6 +141,11 @@ final class CallRecorder {
             ) { url in
                 // Mixing an hour of audio takes a moment, so it stays off the main thread.
                 try await Task.detached { try AmbientRecorder.encode(Self.mix(mic, remote), to: url) }.value
+                // People often dictate right after hanging up; the call waits its turn instead of failing.
+                // Nothing suspends between here and the transcription start, so two waiting calls take turns too.
+                while [.recording, .processing].contains(NotchStateManager.shared.state) {
+                    try? await Task.sleep(for: .seconds(1))
+                }
             }
         }
     }
