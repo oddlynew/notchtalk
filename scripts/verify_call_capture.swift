@@ -13,7 +13,7 @@ struct VerifyCallCapture {
     static func main() async throws {
         check(!ProcessTap.audioProcesses().isEmpty, "Core Audio lists its audio processes")
 
-        let tone = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_verify_tone.wav")
+        let tone = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_verify_tone_\(UUID().uuidString).wav")
         try writeTone(to: tone, seconds: 4)
         defer { try? FileManager.default.removeItem(at: tone) }
         let player = Process()
