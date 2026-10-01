@@ -65,7 +65,7 @@ struct NotchView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .animation(.smooth(duration: 0.25), value: isActive)
-        .animation(.easeInOut(duration: 0.32), value: contentWidth)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.32), value: contentWidth)
         .animation(.easeInOut(duration: 0.32), value: stateManager.pendingSubmit)
         .animation(.easeInOut(duration: 0.32), value: stateManager.processingControlsAvailable)
     }
