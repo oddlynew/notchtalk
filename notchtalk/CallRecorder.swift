@@ -96,7 +96,7 @@ final class CallRecorder {
                 NSLog("Call: microphone failed to start: \(error.localizedDescription)")
             }
         }
-        let micStarted = Date()
+        let micStarted = DispatchTime.now().uptimeNanoseconds
         do {
             tap = try ProcessTap(processes: processes) { samples in
                 DispatchQueue.main.async {
@@ -104,7 +104,8 @@ final class CallRecorder {
                 }
             }
             if micEngine != nil {
-                remoteLead = Int(Date().timeIntervalSince(micStarted) * Double(AmbientBuffer.sampleRate))
+                let elapsed = DispatchTime.now().uptimeNanoseconds - micStarted
+                remoteLead = Int(elapsed) * AmbientBuffer.sampleRate / 1_000_000_000
             }
         } catch {
             problem = Self.tapProblem
@@ -130,6 +131,10 @@ final class CallRecorder {
         let name = FileManager.default.temporaryDirectory
             .appendingPathComponent("notchtalk_call_\(Int(startedAt.timeIntervalSince1970)).m4a")
         Task {
+            // People often dictate right after hanging up; the call waits its turn instead of failing.
+            while [.recording, .processing].contains(NotchStateManager.shared.state) {
+                try? await Task.sleep(for: .seconds(1))
+            }
             await AudioFileTranscription.run(
                 source: name,
                 label: "Call, \(Int((seconds / 60).rounded(.up))) min",
