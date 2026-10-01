@@ -22,6 +22,8 @@ final class CallRecorder {
     /// A route change or a short gap in the microphone must not split one call in two.
     static let hangUpGrace: TimeInterval = 4
     static let tapProblem = "The last call has only your side. To record the other side, allow Notchtalk under System Settings → Privacy & Security → Screen & System Audio Recording."
+    /// A tap without the system audio permission hears only silence, but so does one on a caller who never spoke.
+    static let silentProblem = "The other side of the last call was silent. If they spoke, allow Notchtalk under System Settings → Privacy & Security → Screen & System Audio Recording."
 
     /// Set while a call is being recorded.
     private(set) var startedAt: Date?
@@ -36,6 +38,8 @@ final class CallRecorder {
     @ObservationIgnored private var remote: [Int16] = []
     /// Bumped by every stop, so samples queued before it never land in the next call.
     @ObservationIgnored private var session = 0
+    /// Samples of silence in front of the other side: its tap starts after the microphone.
+    @ObservationIgnored private var remoteLead = 0
 
     var isRecording: Bool { startedAt != nil }
 
@@ -73,6 +77,7 @@ final class CallRecorder {
         session += 1
         let session = session
         startedAt = Date()
+        problem = nil
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -91,11 +96,15 @@ final class CallRecorder {
                 NSLog("Call: microphone failed to start: \(error.localizedDescription)")
             }
         }
+        let micStarted = Date()
         do {
             tap = try ProcessTap(processes: processes) { samples in
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated { CallRecorder.shared.append(samples, remote: true, session: session) }
                 }
+            }
+            if micEngine != nil {
+                remoteLead = Int(Date().timeIntervalSince(micStarted) * Double(AmbientBuffer.sampleRate))
             }
         } catch {
             problem = Self.tapProblem
@@ -110,15 +119,14 @@ final class CallRecorder {
 
     private func finish() {
         guard let startedAt else { return }
-        // A tap without the system audio permission hears only silence.
-        problem = remote.contains { $0 != 0 } ? nil : Self.tapProblem
-        let samples = Self.mix(mic, remote)
+        if problem == nil, !remote.contains(where: { $0 != 0 }) { problem = Self.silentProblem }
+        let (mic, remote) = (mic, Array(repeating: 0, count: remote.isEmpty ? 0 : remoteLead) + remote)
         stopCapture()
-        guard !samples.isEmpty else {
+        guard !mic.isEmpty || !remote.isEmpty else {
             NSLog("Call: nothing was recorded")
             return
         }
-        let seconds = Double(samples.count) / Double(AmbientBuffer.sampleRate)
+        let seconds = Double(max(mic.count, remote.count)) / Double(AmbientBuffer.sampleRate)
         let name = FileManager.default.temporaryDirectory
             .appendingPathComponent("notchtalk_call_\(Int(startedAt.timeIntervalSince1970)).m4a")
         Task {
@@ -128,7 +136,8 @@ final class CallRecorder {
                 reason: "Call ended after \(Int(seconds)) s",
                 duration: seconds
             ) { url in
-                try await Task.detached { try AmbientRecorder.encode(samples, to: url) }.value
+                // Mixing an hour of audio takes a moment, so it stays off the main thread.
+                try await Task.detached { try AmbientRecorder.encode(Self.mix(mic, remote), to: url) }.value
             }
         }
     }
@@ -142,10 +151,11 @@ final class CallRecorder {
         tap = nil
         mic = []
         remote = []
+        remoteLead = 0
         startedAt = nil
     }
 
-    /// Both sides as one track. The two captures start together, so sample i of each is the same moment.
+    /// Both sides as one track; the caller lines them up, so sample i of each is the same moment.
     nonisolated static func mix(_ a: [Int16], _ b: [Int16]) -> [Int16] {
         (0..<max(a.count, b.count)).map { i in
             Int16(clamping: Int32(i < a.count ? a[i] : 0) + Int32(i < b.count ? b[i] : 0))
