@@ -27,14 +27,15 @@ final class CallRecorder {
     private(set) var startedAt: Date?
     /// Shown in the menu when calls can only be recorded from the microphone.
     private(set) var problem: String?
-    private var watchTask: Task<Void, Never>?
-    private var micEngine: AVAudioEngine?
-    private var tap: ProcessTap?
+    @ObservationIgnored private var watchTask: Task<Void, Never>?
+    @ObservationIgnored private var micEngine: AVAudioEngine?
+    @ObservationIgnored private var tap: ProcessTap?
     // ponytail: both sides stay in memory, about 115 MB per hour each; stream to disk if calls run for hours.
-    private var mic: [Int16] = []
-    private var remote: [Int16] = []
+    // Not observed: an observed array is copied whole on every append.
+    @ObservationIgnored private var mic: [Int16] = []
+    @ObservationIgnored private var remote: [Int16] = []
     /// Bumped by every stop, so samples queued before it never land in the next call.
-    private var session = 0
+    @ObservationIgnored private var session = 0
 
     var isRecording: Bool { startedAt != nil }
 
