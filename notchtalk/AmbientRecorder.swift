@@ -262,6 +262,19 @@ final class AmbientRecorder {
         into buffer: AmbientBuffer,
         session: Int
     ) -> AVAudioNodeTapBlock? {
+        guard let convert = makeConverter(from: inputFormat) else { return nil }
+        return { input, _ in
+            guard let samples = convert(input) else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if buffer.session == session { buffer.append(samples) }
+                }
+            }
+        }
+    }
+
+    /// Turns buffers of `inputFormat` into 16 kHz mono samples. Call it from one thread at a time.
+    nonisolated static func makeConverter(from inputFormat: AVAudioFormat) -> ((AVAudioPCMBuffer) -> [Int16]?)? {
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
             sampleRate: Double(AmbientBuffer.sampleRate),
@@ -272,9 +285,9 @@ final class AmbientRecorder {
         }
         converter.downmix = true
         let ratio = targetFormat.sampleRate / inputFormat.sampleRate
-        return { input, _ in
+        return { input in
             let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio) + 32
-            guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return }
+            guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else { return nil }
             var consumed = false
             var error: NSError?
             converter.convert(to: output, error: &error) { _, status in
@@ -286,13 +299,8 @@ final class AmbientRecorder {
                 status.pointee = .haveData
                 return input
             }
-            guard error == nil, let channel = output.int16ChannelData?[0] else { return }
-            let samples = Array(UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    if buffer.session == session { buffer.append(samples) }
-                }
-            }
+            guard error == nil, let channel = output.int16ChannelData?[0] else { return nil }
+            return Array(UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
         }
     }
 

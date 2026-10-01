@@ -1,0 +1,153 @@
+//
+//  CallRecorder.swift
+//  notchtalk
+//
+
+import AVFoundation
+import CoreAudio
+import Foundation
+
+/// Records the calls held on this Mac while call mode is on: iPhone calls through Continuity and FaceTime.
+/// A call is under way while one of Apple's call processes reads the microphone. The other side comes
+/// from a Core Audio process tap on those processes, this side from the microphone. When the call ends,
+/// both are mixed into one track and transcribed like a voice memo.
+@MainActor
+@Observable
+final class CallRecorder {
+    static let shared = CallRecorder()
+    /// The processes that carry Continuity and FaceTime calls, as CallNotes (github.com/michaelczesun/callnotes) records them.
+    nonisolated static let callProcesses: Set<String> = [
+        "com.apple.avconferenced", "com.apple.TelephonyUtilities", "com.apple.FaceTime", "com.apple.Phone"
+    ]
+    /// A route change or a short gap in the microphone must not split one call in two.
+    static let hangUpGrace: TimeInterval = 4
+    static let tapProblem = "The last call has only your side. To record the other side, allow Notchtalk under System Settings → Privacy & Security → Screen & System Audio Recording."
+
+    /// Set while a call is being recorded.
+    private(set) var startedAt: Date?
+    /// Shown in the menu when calls can only be recorded from the microphone.
+    private(set) var problem: String?
+    private var watchTask: Task<Void, Never>?
+    private var micEngine: AVAudioEngine?
+    private var tap: ProcessTap?
+    // ponytail: both sides stay in memory, about 115 MB per hour each; stream to disk if calls run for hours.
+    private var mic: [Int16] = []
+    private var remote: [Int16] = []
+    /// Bumped by every stop, so samples queued before it never land in the next call.
+    private var session = 0
+
+    var isRecording: Bool { startedAt != nil }
+
+    /// Turning call mode off during a call discards that call.
+    func update(enabled: Bool) {
+        guard enabled else {
+            watchTask?.cancel()
+            watchTask = nil
+            problem = nil
+            stopCapture()
+            return
+        }
+        guard watchTask == nil else { return }
+        // Asks for the system audio permission now rather than in the middle of the first call.
+        ProcessTap.requestPermission()
+        watchTask = Task { [weak self] in
+            var quietSince: Date?
+            while !Task.isCancelled {
+                guard let self else { return }
+                let processes = ProcessTap.audioProcesses().filter { Self.callProcesses.contains($0.bundleID) }
+                if processes.contains(where: \.readsMicrophone) {
+                    quietSince = nil
+                    if !self.isRecording { self.start(tapping: processes.map(\.id)) }
+                } else if self.isRecording {
+                    let since = quietSince ?? Date()
+                    quietSince = since
+                    if Date().timeIntervalSince(since) >= Self.hangUpGrace { self.finish() }
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    private func start(tapping processes: [AudioObjectID]) {
+        session += 1
+        let session = session
+        startedAt = Date()
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        if format.sampleRate > 0, let convert = AmbientRecorder.makeConverter(from: format) {
+            input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+                guard let samples = convert(buffer) else { return }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { CallRecorder.shared.append(samples, remote: false, session: session) }
+                }
+            }
+            do {
+                try engine.start()
+                micEngine = engine
+            } catch {
+                input.removeTap(onBus: 0)
+                NSLog("Call: microphone failed to start: \(error.localizedDescription)")
+            }
+        }
+        do {
+            tap = try ProcessTap(processes: processes) { samples in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { CallRecorder.shared.append(samples, remote: true, session: session) }
+                }
+            }
+        } catch {
+            problem = Self.tapProblem
+            NSLog("Call: process tap failed: \(error)")
+        }
+    }
+
+    private func append(_ samples: [Int16], remote isRemote: Bool, session: Int) {
+        guard session == self.session else { return }
+        if isRemote { remote += samples } else { mic += samples }
+    }
+
+    private func finish() {
+        guard let startedAt else { return }
+        // A tap without the system audio permission hears only silence.
+        problem = remote.contains { $0 != 0 } ? nil : Self.tapProblem
+        let samples = Self.mix(mic, remote)
+        stopCapture()
+        guard !samples.isEmpty else {
+            NSLog("Call: nothing was recorded")
+            return
+        }
+        let seconds = Double(samples.count) / Double(AmbientBuffer.sampleRate)
+        let name = FileManager.default.temporaryDirectory
+            .appendingPathComponent("notchtalk_call_\(Int(startedAt.timeIntervalSince1970)).m4a")
+        Task {
+            await AudioFileTranscription.run(
+                source: name,
+                label: "Call, \(Int((seconds / 60).rounded(.up))) min",
+                reason: "Call ended after \(Int(seconds)) s",
+                duration: seconds
+            ) { url in
+                try await Task.detached { try AmbientRecorder.encode(samples, to: url) }.value
+            }
+        }
+    }
+
+    private func stopCapture() {
+        session += 1
+        micEngine?.inputNode.removeTap(onBus: 0)
+        micEngine?.stop()
+        micEngine = nil
+        tap?.stop()
+        tap = nil
+        mic = []
+        remote = []
+        startedAt = nil
+    }
+
+    /// Both sides as one track. The two captures start together, so sample i of each is the same moment.
+    nonisolated static func mix(_ a: [Int16], _ b: [Int16]) -> [Int16] {
+        (0..<max(a.count, b.count)).map { i in
+            Int16(clamping: Int32(i < a.count ? a[i] : 0) + Int32(i < b.count ? b[i] : 0))
+        }
+    }
+}

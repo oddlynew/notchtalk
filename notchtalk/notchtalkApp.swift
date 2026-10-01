@@ -33,6 +33,7 @@ final class AppController {
         if !hasAccessibilityPermission || !hasMicrophonePermission {
             return "exclamationmark.triangle.fill"
         }
+        if CallRecorder.shared.isRecording { return "phone.fill" }
         // Ambient keeps the microphone open; the menu bar says so at a glance.
         return AmbientRecorder.shared.isRunning ? "ear.fill" : "mic.fill"
     }
@@ -103,6 +104,7 @@ final class AppController {
         checkAndStartHotKey()
         checkMicrophonePermission()
         SettingsManager.shared.applyAmbient()
+        CallRecorder.shared.update(enabled: SettingsManager.shared.callRecordingEnabled)
         observeStateChanges()
     }
 
@@ -155,10 +157,11 @@ final class AppController {
                 _ = stateManager.state
                 _ = stateManager.finishProgress
                 _ = stateManager.processingControlsAvailable
+                _ = CallRecorder.shared.isRecording
             } onChange: { [weak self] in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    if stateManager.state == .idle {
+                    if stateManager.state == .idle && !CallRecorder.shared.isRecording {
                         windowController?.hide()
                     } else {
                         windowController?.show()

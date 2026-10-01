@@ -72,6 +72,8 @@ cat >"$INFO_PLIST" <<PLIST
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Notchtalk records the other side of calls on this Mac when you turn on call recording.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Notchtalk needs microphone access to record audio for transcription.</string>
   <key>NSPrincipalClass</key>

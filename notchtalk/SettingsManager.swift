@@ -68,6 +68,12 @@ final class SettingsManager {
     var ambientHotKeyEnabled: Bool {
         didSet { UserDefaults.standard.set(ambientHotKeyEnabled, forKey: "ambientHotKeyEnabled") }
     }
+    var callRecordingEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(callRecordingEnabled, forKey: "callRecordingEnabled")
+            CallRecorder.shared.update(enabled: callRecordingEnabled)
+        }
+    }
     var elevenLabsSpeakerRecognitionEnabled: Bool {
         didSet {
             UserDefaults.standard.set(elevenLabsSpeakerRecognitionEnabled, forKey: "elevenLabsSpeakerRecognitionEnabled")
@@ -105,6 +111,7 @@ final class SettingsManager {
         let savedWindow = defaults.integer(forKey: "ambientWindowMinutes")
         self.ambientWindowMinutes = [5, 10, 20].contains(savedWindow) ? savedWindow : 10
         self.ambientHotKeyEnabled = defaults.object(forKey: "ambientHotKeyEnabled") as? Bool ?? true
+        self.callRecordingEnabled = defaults.bool(forKey: "callRecordingEnabled")
         self.elevenLabsSpeakerRecognitionEnabled = UserDefaults.standard.bool(forKey: "elevenLabsSpeakerRecognitionEnabled")
         self.elevenLabsSpeakerLibraryRecognitionEnabled = UserDefaults.standard.bool(
             forKey: "elevenLabsSpeakerLibraryRecognitionEnabled"

@@ -354,6 +354,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAudioCaptureUsageDescription = "Notchtalk records the other side of calls on this Mac when you turn on call recording.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Notchtalk needs microphone access to record audio for transcription.";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -388,6 +389,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSAudioCaptureUsageDescription = "Notchtalk records the other side of calls on this Mac when you turn on call recording.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Notchtalk needs microphone access to record audio for transcription.";
 				LD_RUNPATH_SEARCH_PATHS = (
