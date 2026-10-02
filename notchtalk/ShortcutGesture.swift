@@ -20,8 +20,12 @@ struct ShortcutGesture {
         holding = true
         return true
     }
+    /// A slow tap just past a short hold delay is not a dictation; ending it would drop everything said next.
+    static let minimumHold: TimeInterval = 1
+
     mutating func release(now: TimeInterval = ProcessInfo.processInfo.systemUptime, holdDelay: TimeInterval = 0.8) -> Action {
-        let action: Action = down && allowed ? ((holding || now - pressedAt >= holdDelay) ? .endHold : .none) : .none
+        let held = now - pressedAt
+        let action: Action = down && allowed && held >= max(holdDelay, Self.minimumHold) ? .endHold : .none
         cancel()
         return action
     }

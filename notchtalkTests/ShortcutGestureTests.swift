@@ -10,10 +10,10 @@ struct ShortcutGestureTests {
   #expect(!gesture.press(allowed: true))
   #expect(gesture.release() == .none)
   #expect(!gesture.threshold())
-  #expect(gesture.press(allowed: true))
+  #expect(gesture.press(allowed: true, now: 5))
   #expect(gesture.threshold())
   #expect(!gesture.threshold())
-  #expect(gesture.release() == .endHold)
+  #expect(gesture.release(now: 6) == .endHold)
   #expect(gesture.press(allowed: true))
   gesture.cancel()
   #expect(!gesture.threshold())
@@ -29,10 +29,17 @@ struct ShortcutGestureTests {
   #expect(gesture.press(allowed: true, now: 10))
   #expect(gesture.release(now: 10.79) == .none)
   #expect(gesture.press(allowed: true, now: 20))
-  #expect(gesture.release(now: 20.81) == .endHold)
+  #expect(gesture.release(now: 21) == .endHold)
 
+  // Daniel's 350 ms hold delay, 02.10.2026: a slow tap released at 400 ms stopped the recording after 0.24 s
+  // and everything said next was lost. A hold under a second keeps recording like a tap.
   #expect(gesture.press(allowed: true, now: 30))
-  #expect(gesture.release(now: 30.4, holdDelay: 0.3) == .endHold)
+  #expect(gesture.threshold())
+  #expect(gesture.release(now: 30.4, holdDelay: 0.35) == .none)
+  #expect(gesture.press(allowed: true, now: 35))
+  #expect(gesture.release(now: 35.99, holdDelay: 0.35) == .none)
+  #expect(gesture.press(allowed: true, now: 36))
+  #expect(gesture.release(now: 37, holdDelay: 0.35) == .endHold)
   #expect(gesture.press(allowed: true, now: 40))
   #expect(gesture.release(now: 40.9, holdDelay: 1.2) == .none)
 
