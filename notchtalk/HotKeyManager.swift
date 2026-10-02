@@ -26,6 +26,7 @@ final class HotKeyManager: @unchecked Sendable {
     var onToggle: (@MainActor () -> Void)?
     var onChordCancel: (@MainActor () -> Void)?
     var onHoldEnd: (@MainActor () -> Void)?
+    var onTapEnd: (@MainActor () -> Void)?
     var onCancel: (@MainActor () -> Void)?
     var onAmbientRecall: (@MainActor () -> Void)?
 
@@ -170,7 +171,7 @@ final class HotKeyManager: @unchecked Sendable {
                     self?.onRelease?()
                     switch action {
                     case .endHold: self?.onHoldEnd?()
-                    case .none: break
+                    case .none: self?.onTapEnd?()
                     }
                 }
             }

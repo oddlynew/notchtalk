@@ -66,7 +66,7 @@ final class AppController {
         HotKeyManager.shared.onFinishWithoutSending = { [weak self] in
             guard let self, self.stateManager.state == .recording else { return }
             self.gestureStartedRecording = false
-            self.stateManager.stopRecording(submitAfterPaste: false)
+            self.stateManager.stopRecording(submitAfterPaste: false, trigger: "finish_without_sending")
         }
         HotKeyManager.shared.onRelease = { [weak self] in
             self?.stateManager.releaseFinishGesture()
@@ -84,7 +84,15 @@ final class AppController {
         HotKeyManager.shared.onHoldEnd = { [weak self] in
             guard let self, self.gestureStartedRecording, self.stateManager.state == .recording else { return }
             self.gestureStartedRecording = false
-            self.stateManager.stopRecording(submitAfterPaste: SettingsManager.shared.sendWithEnter && !self.stateManager.noSendForRecording)
+            self.stateManager.stopRecording(
+                submitAfterPaste: SettingsManager.shared.sendWithEnter && !self.stateManager.noSendForRecording,
+                trigger: "hold_end"
+            )
+        }
+        HotKeyManager.shared.onTapEnd = { [weak self] in
+            // A hold released too early to be a dictation keeps recording like a tap.
+            guard let self, self.gestureStartedRecording else { return }
+            self.stateManager.isHoldRecording = false
         }
         HotKeyManager.shared.onAmbientRecall = {
             let settings = SettingsManager.shared

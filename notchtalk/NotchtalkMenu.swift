@@ -51,8 +51,9 @@ struct NotchtalkMenu: View {
             }
             VStack(spacing: 9) {
                 shortcut("Press right ⌘", detail: "Start recording")
-                shortcut("Release before \(Int(settings.startHoldDelay * 1000)) ms", detail: "Keep recording")
-                shortcut("Hold beyond \(Int(settings.startHoldDelay * 1000)) ms", detail: "Release to finish")
+                let holdToFinish = Int(max(settings.startHoldDelay, ShortcutGesture.minimumHold) * 1000)
+                shortcut("Release before \(holdToFinish) ms", detail: "Keep recording")
+                shortcut("Hold beyond \(holdToFinish) ms", detail: "Release to finish")
                 shortcut("Hold again · \(Int(settings.finishHoldDelay * 1000)) ms", detail: "Finish & send")
                 shortcut("Click ⏸ in the pill", detail: "Pause & resume")
                 shortcut("Release Esc first", detail: "Cancel")

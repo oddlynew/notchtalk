@@ -193,7 +193,7 @@ final class NotchStateManager {
                 finishProgress = progress
                 if progress >= 1 {
                     finishProgress = nil
-                    stopRecording(submitAfterPaste: true)
+                    stopRecording(submitAfterPaste: true, trigger: "finish_hold")
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(16))
@@ -213,7 +213,7 @@ final class NotchStateManager {
         finishTask?.cancel()
         finishTask = nil
         finishProgress = nil
-        stopRecording(submitAfterPaste: shouldSend)
+        stopRecording(submitAfterPaste: shouldSend, trigger: "finish_tap")
     }
 
     func stopRecording(submitAfterPaste: Bool = false, trigger: String = "programmatic") {
