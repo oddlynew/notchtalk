@@ -163,8 +163,7 @@ final class CallRecorder {
 
     private func stopCapture() {
         session += 1
-        micEngine?.inputNode.removeTap(onBus: 0)
-        micEngine?.stop()
+        AmbientRecorder.retire(micEngine)
         micEngine = nil
         tap?.stop()
         tap = nil
