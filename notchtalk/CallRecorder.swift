@@ -95,11 +95,12 @@ final class CallRecorder {
                 try engine.start()
                 micEngine = engine
             } catch {
-                input.removeTap(onBus: 0)
+                AmbientRecorder.retire(engine)
                 problem = Self.micProblem
                 NSLog("Call: microphone failed to start: \(error.localizedDescription)")
             }
         } else {
+            AmbientRecorder.retire(engine)
             problem = Self.micProblem
             NSLog("Call: the microphone has no usable format")
         }

@@ -120,6 +120,7 @@ final class AmbientRecorder {
         guard inputFormat.sampleRate > 0,
               let tap = Self.makeTap(from: inputFormat, into: buffer, session: buffer.session) else {
             NSLog("Ambient: no usable input format")
+            Self.retire(engine)
             retryLater()
             return
         }
@@ -127,7 +128,7 @@ final class AmbientRecorder {
         do {
             try engine.start()
         } catch {
-            input.removeTap(onBus: 0)
+            Self.retire(engine)
             NSLog("Ambient: engine failed to start: \(error.localizedDescription)")
             retryLater()
             return
