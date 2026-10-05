@@ -142,7 +142,9 @@ final class AmbientRecorder {
         ) { [weak self] _ in
             // Apple: never tear the engine down inside this notification's handler, it can deadlock.
             Task { @MainActor [weak self] in
-                guard let self, self.isRunning else { return }
+                // Pinning the built-in microphone posts this too, with the engine still running. Restarting then
+                // pins again and loops, several new engines a second, until a torn-down one corrupts memory.
+                guard let self, self.isRunning, !engine.isRunning else { return }
                 self.stopEngine()
                 self.start()
             }
