@@ -118,7 +118,7 @@ macOS protects that folder, so Notchtalk needs Full Disk Access once: System Set
 
 ## Dropping A File
 
-Drag an audio or video file (m4a, mp3, wav, aiff, mp4, mov and anything else macOS plays) onto the notch; nothing has to be open first. On a screen without a notch, drag it onto the middle of the menu bar. A drop zone opens below the notch while the file hovers, then shows reading, transcribing and the result, and closes a few seconds later. The file goes the same way as a voice memo: the selected provider, the same retries and timeouts, an entry in History and the transcript on the clipboard, never pasted. Its sound is sent as `.m4a`; your file stays where it is. The menu bar panel shows the same status under **Latest transcript**, but takes no drop: it closes as soon as a drag from Finder moves focus away. The menu bar icon takes no drop either, because macOS 26 does not hand it drag events.
+Open History & settings -> History and drag an audio or video file (m4a, mp3, wav, aiff, mp4, mov and anything else macOS plays) onto the drop zone at the top, or click **Choose File…**. The zone shows reading, transcribing and the result. The file goes the same way as a voice memo: the selected provider, the same retries and timeouts, an entry in History and the transcript on the clipboard, never pasted. Its sound is sent as `.m4a`; your file stays where it is.
 
 ## Recording Calls
 

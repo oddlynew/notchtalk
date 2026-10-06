@@ -41,7 +41,6 @@ final class AppController {
     init() {
         windowController = NotchWindowController(stateManager: stateManager)
         windowController?.setup()
-        NotchDropTarget.shared.install()
 
         HotKeyManager.shared.onToggle = { [weak self] in
             guard let self else { return }

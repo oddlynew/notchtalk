@@ -263,6 +263,8 @@ struct SettingsView: View {
 
     private var historyTab: some View {
         VStack(alignment: .leading, spacing: 12) {
+            FileDropZone()
+
             HStack {
                 Picker("Status", selection: $selectedHistoryStatus) {
                     Text("All").tag(Optional<TranscriptionDiagnosticsEntry.Status>.none)

@@ -98,7 +98,7 @@ enum AudioFileTranscription {
     }
 }
 
-/// A file dropped on the notch, and what became of it.
+/// A file dropped on or chosen in the app window, and what became of it.
 @MainActor
 @Observable
 final class FileDrop {
@@ -112,9 +112,9 @@ final class FileDrop {
         case failed(String)
     }
 
-    /// A file hovers over the notch.
+    /// A file hovers over the drop zone.
     var hovering = false
-    /// Counts drops, so the notch shows the same rejection again for a second drop.
+    /// Counts drops.
     private(set) var attempts = 0
     private var name = ""
     private var reading = false
@@ -141,7 +141,7 @@ final class FileDrop {
         case .recording, .pending: return .transcribing(name)
         case .succeeded: return .done(name)
         case .cancelled: return .idle
-        // History keeps the details; the notch says it in plain words.
+        // History keeps the details; the drop zone says it in plain words.
         case .failed: return .failed("Couldn't transcribe \(name). Details are in History.")
         }
     }
@@ -180,10 +180,6 @@ final class FileDrop {
         return true
     }
 
-    func transcribe(_ sender: NSDraggingInfo) -> Bool {
-        transcribe(sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? [])
-    }
-
     /// Stops following the History entry once its run ends, so a retry from History, which may
     /// paste instead of copy, is not reported as this drop.
     func freeze() {
@@ -203,207 +199,43 @@ final class FileDrop {
     }
 }
 
-/// The notch takes a file dragged from anywhere, with no window to keep open: on every screen a
-/// clear window the size of the notch waits above the menu bar, or a short strip at its middle on
-/// a screen without a notch. The one under the file opens into a drop zone and then shows how the
-/// file fares until a few seconds after the result. The menu bar icon takes no drop: on macOS 26
-/// its status window never receives drag events.
+
+/// The drop zone in the app window: takes one audio or video file dragged onto it or chosen in an
+/// open panel, then shows how it fares until a few seconds after the result.
 @MainActor
-@Observable
-final class NotchDropTarget {
-    static let shared = NotchDropTarget()
-
-    private(set) var isOpen = false
-    /// The frame of the screen whose notch opens.
-    private(set) var activeScreen: CGRect = .zero
-    @ObservationIgnored private var panels: [(screen: NSScreen, panel: NSPanel)] = []
-    @ObservationIgnored private var screenObserver: NSObjectProtocol?
-    @ObservationIgnored private var shown: (status: FileDrop.Status, attempts: Int) = (.idle, 0)
-    @ObservationIgnored private var showsResult = false
-    @ObservationIgnored private var resultTask: Task<Void, Never>?
-    @ObservationIgnored private var closeTask: Task<Void, Never>?
-    /// Set while the left button is down, the only time a file can be dragged.
-    @ObservationIgnored private var takesMouse = false
-
-    private static let openSize = CGSize(width: 360, height: 84)
-
-    func install() {
-        makePanels()
-        screenObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in Task { @MainActor [weak self] in self?.makePanels() } }
-        // The windows let clicks through to the menu bar until a drag may have started in another app.
-        NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { _ in
-            Task { @MainActor in NotchDropTarget.shared.mouseDragged() }
-        }
-        observe()
-    }
-
-    private func mouseDragged() {
-        guard !takesMouse else { return }
-        setTakesMouse(true)
-        Task {
-            // A short poll, so a click right after the release already reaches the menu bar.
-            while NSEvent.pressedMouseButtons & 1 != 0 { try? await Task.sleep(for: .milliseconds(30)) }
-            setTakesMouse(false)
-        }
-    }
-
-    private func setTakesMouse(_ takes: Bool) {
-        takesMouse = takes
-        panels.forEach { $0.panel.ignoresMouseEvents = !takes }
-    }
-
-    /// A file hovers over the notch of this screen.
-    func hover(on screen: NSScreen?) {
-        if let screen { activeScreen = screen.frame }
-        FileDrop.shared.hovering = true
-    }
-
-    private func makePanels() {
-        panels.forEach { $0.panel.close() }
-        panels = NSScreen.screens.map { screen in
-            let notch = Self.notch(of: screen)
-            let panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-            panel.isFloatingPanel = true
-            panel.isReleasedWhenClosed = false
-            // Above the menu bar, which sits at .mainMenu.
-            panel.level = .statusBar
-            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-            panel.isOpaque = false
-            panel.backgroundColor = .clear
-            panel.hasShadow = false
-            panel.hidesOnDeactivate = false
-            panel.animationBehavior = .none
-            panel.ignoresMouseEvents = !takesMouse
-            let container = NotchDropView.Container(frame: .zero)
-            let hosting = NSHostingView(rootView: NotchDropView(target: self, screen: screen.frame, notchHeight: notch.height))
-            hosting.autoresizingMask = [.width, .height]
-            container.addSubview(hosting)
-            panel.contentView = container
-            panel.orderFrontRegardless()
-            return (screen, panel)
-        }
-        if !panels.contains(where: { $0.screen.frame == activeScreen }) {
-            activeScreen = (NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main)?.frame ?? .zero
-        }
-        place()
-    }
-
-    private func observe() {
-        let drop = FileDrop.shared
-        withObservationTracking { _ = (drop.status, drop.run, drop.hovering, drop.attempts, activeScreen) } onChange: { [weak self] in
-            Task { @MainActor [weak self] in self?.observe() }
-        }
-        update()
-    }
-
-    private func update() {
-        let drop = FileDrop.shared
-        drop.freeze()
-        let status = drop.status
-        if status != shown.status || drop.attempts != shown.attempts {
-            shown = (status, drop.attempts)
-            resultTask?.cancel()
-            switch status {
-            case .done, .failed:
-                showsResult = true
-                resultTask = Task { [weak self] in
-                    try? await Task.sleep(for: .seconds(4))
-                    guard !Task.isCancelled, let self else { return }
-                    showsResult = false
-                    FileDrop.shared.settle()
-                    update()
-                }
-            default:
-                showsResult = false
-            }
-        }
-        let working = switch status {
-        case .reading, .transcribing: true
-        default: false
-        }
-        setOpen(drop.hovering || working || showsResult)
-    }
-
-    private func setOpen(_ open: Bool) {
-        if open {
-            closeTask?.cancel()
-            if !isOpen { isOpen = true }
-            place()
-        } else if isOpen {
-            isOpen = false
-            // The window shrinks after the closing animation, which it would cut off.
-            closeTask = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(350))
-                guard !Task.isCancelled else { return }
-                self?.place()
-            }
-        }
-    }
-
-    private func place() {
-        for (screen, panel) in panels {
-            let notch = Self.notch(of: screen)
-            let size = isOpen && screen.frame == activeScreen
-                ? CGSize(width: max(Self.openSize.width, notch.width), height: notch.height + Self.openSize.height)
-                : notch.size
-            panel.setFrame(NSRect(x: notch.midX - size.width / 2, y: screen.frame.maxY - size.height, width: size.width, height: size.height), display: true)
-        }
-    }
-
-    /// The notch, or a short strip at the top middle of a screen without one.
-    private static func notch(of screen: NSScreen) -> NSRect {
-        if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea, !left.isEmpty, !right.isEmpty {
-            return NSRect(x: left.maxX, y: 0, width: right.minX - left.maxX, height: screen.safeAreaInsets.top)
-        }
-        // ponytail: the strip covers the middle of the menu bar, where status items rarely reach.
-        return NSRect(x: screen.frame.midX - 90, y: 0, width: 180, height: NSStatusBar.system.thickness)
-    }
-}
-
-/// The drop zone that hangs from the notch, and the status of the dropped file.
-@MainActor
-struct NotchDropView: View {
-    let target: NotchDropTarget
-    let screen: CGRect
-    let notchHeight: CGFloat
+struct FileDropZone: View {
     private let drop = FileDrop.shared
     private let manager = NotchStateManager.shared
+    @State private var choosing = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var isOpen: Bool { target.isOpen && target.activeScreen == screen }
-
     var body: some View {
-        // The window server sends drags through fully clear pixels, so the waiting window and the
-        // hovered zone keep a trace of color. Around a shown result the window stays fully clear.
-        Color.black.opacity(!isOpen || drop.hovering ? 0.01 : 0)
-            .overlay(alignment: .top) {
-                if isOpen {
-                    box.transition(reduceMotion ? .opacity : .scale(scale: 0.5, anchor: .top).combined(with: .opacity))
-                }
-            }
-            .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.3, bounce: 0.2), value: isOpen)
-    }
-
-    private var box: some View {
-        let shape = UnevenRoundedRectangle(bottomLeadingRadius: 22, bottomTrailingRadius: 22)
-        return HStack(spacing: 10) {
-            icon.font(.system(size: 18)).frame(width: 22)
-            Text(message).font(.system(size: 12, weight: .medium)).lineLimit(2).truncationMode(.middle)
+        HStack(spacing: 10) {
+            icon.font(.system(size: 16)).frame(width: 20)
+            Text(message).lineLimit(2).truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Choose File…") { choosing = true }
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 22).padding(.top, notchHeight + 12).padding(.bottom, 16)
-        .background(.black, in: shape)
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .background(NotchtalkStyle.accent.opacity(drop.hovering ? 0.10 : 0.03), in: RoundedRectangle(cornerRadius: 10))
         .overlay {
-            if drop.hovering {
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(NotchtalkStyle.accent, style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                    .padding(.top, notchHeight + 4).padding([.horizontal, .bottom], 8)
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(drop.hovering ? NotchtalkStyle.accent : .secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+        }
+        .dropDestination(for: URL.self) { urls, _ in drop.transcribe(urls) } isTargeted: { drop.hovering = $0 }
+        .fileImporter(isPresented: $choosing, allowedContentTypes: [.audiovisualContent]) { result in
+            if case .success(let url) = result { drop.transcribe([url]) }
+        }
+        // A retry from History, which may paste instead of copy, is not this drop.
+        .onChange(of: drop.run, initial: true) { drop.freeze() }
+        .task(id: drop.status) {
+            switch drop.status {
+            case .done, .failed:
+                try? await Task.sleep(for: .seconds(4))
+                if !Task.isCancelled { drop.settle() }
+            default: break
             }
         }
-        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder private var icon: some View {
@@ -417,9 +249,9 @@ struct NotchDropView: View {
                 } else {
                     ProgressView().controlSize(.small)
                 }
-            case .done: Image(systemName: "doc.on.clipboard").foregroundStyle(Color(red: 0.64, green: 0.86, blue: 0.72))
+            case .done: Image(systemName: "doc.on.clipboard").foregroundStyle(NotchtalkStyle.accent)
             case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
-            case .idle: Image(systemName: "arrow.down.doc").foregroundStyle(NotchtalkStyle.accent)
+            case .idle: Image(systemName: "arrow.down.doc").foregroundStyle(.secondary)
             }
         }
     }
@@ -427,29 +259,11 @@ struct NotchDropView: View {
     private var message: String {
         if drop.hovering { return drop.isBusy ? "Busy, drop again in a moment" : "Drop to transcribe" }
         switch drop.status {
-        case .idle: return "Drop to transcribe"
+        case .idle: return "Drop an audio or video file here to transcribe it"
         case .reading(let name): return "Reading \(name)"
         case .transcribing(let name): return "\(manager.processingStatusText) \(name)"
         case .done(let name): return "Transcript of \(name) copied"
         case .failed(let message): return message
         }
-    }
-
-    final class Container: NSView {
-        override init(frame: NSRect) {
-            super.init(frame: frame)
-            registerForDraggedTypes([.fileURL])
-        }
-
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-        override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-            NotchDropTarget.shared.hover(on: window?.screen)
-            return .copy
-        }
-
-        override func draggingExited(_ sender: NSDraggingInfo?) { FileDrop.shared.hovering = false }
-
-        override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { FileDrop.shared.transcribe(sender) }
     }
 }
