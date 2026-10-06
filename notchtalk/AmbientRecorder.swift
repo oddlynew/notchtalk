@@ -120,6 +120,7 @@ final class AmbientRecorder {
         guard inputFormat.sampleRate > 0,
               let tap = Self.makeTap(from: inputFormat, into: buffer, session: buffer.session) else {
             NSLog("Ambient: no usable input format")
+            Self.retire(engine)
             retryLater()
             return
         }
@@ -127,7 +128,7 @@ final class AmbientRecorder {
         do {
             try engine.start()
         } catch {
-            input.removeTap(onBus: 0)
+            Self.retire(engine)
             NSLog("Ambient: engine failed to start: \(error.localizedDescription)")
             retryLater()
             return
@@ -193,10 +194,21 @@ final class AmbientRecorder {
             NotificationCenter.default.removeObserver(configurationObserver)
         }
         configurationObserver = nil
-        engine?.inputNode.removeTap(onBus: 0)
-        engine?.stop()
+        Self.retire(engine)
         engine = nil
         isRunning = false
+    }
+
+    /// Stops an engine and keeps it alive a few seconds more. AVFAudio queues device-change callbacks
+    /// (AirPods, unplugged mic) that still call into the engine; freeing it right away crashed the app.
+    static func retire(_ engine: AVAudioEngine?) {
+        guard let engine else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            withExtendedLifetime(engine) {}
+        }
     }
 
     /// A Bluetooth headset used as input drops into call quality for as long as ambient listens,
