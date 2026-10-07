@@ -187,7 +187,7 @@ struct AmbientRow: View {
             HStack(spacing: 2) {
                 ForEach(AmbientRecorder.recallChoices.filter { $0 <= settings.ambientWindowMinutes }, id: \.self) { minutes in
                     Button("\(minutes) min") { manager.transcribeAmbient(minutes: minutes, allowPaste: false) }
-                        .buttonStyle(QuietButtonStyle(compact: true))
+                        .buttonStyle(QuietButtonStyle(compact: true, horizontalPadding: 4))
                         .accessibilityLabel("Transcribe the last \(minutes) minutes")
                 }
             }

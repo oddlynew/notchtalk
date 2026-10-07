@@ -16,11 +16,13 @@ struct QuietButtonStyle: ButtonStyle {
     var prominent = false
     /// Low and tight, for a row of small choices.
     var compact = false
+    /// Overrides the side padding, for choices that sit close together.
+    var horizontalPadding: CGFloat?
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     func makeBody(configuration: Configuration) -> some View {
-        QuietButtonBody(configuration: configuration, enabled: isEnabled, reduceMotion: reduceMotion, prominent: prominent, compact: compact, dark: colorScheme == .dark)
+        QuietButtonBody(configuration: configuration, enabled: isEnabled, reduceMotion: reduceMotion, prominent: prominent, compact: compact, horizontalPadding: horizontalPadding, dark: colorScheme == .dark)
     }
     private struct QuietButtonBody: View {
         let configuration: Configuration
@@ -28,6 +30,7 @@ struct QuietButtonStyle: ButtonStyle {
         let reduceMotion: Bool
         let prominent: Bool
         let compact: Bool
+        let horizontalPadding: CGFloat?
         let dark: Bool
         @State private var hovered = false
         var body: some View {
@@ -36,7 +39,7 @@ struct QuietButtonStyle: ButtonStyle {
                 .font(.system(size: compact ? 11 : 12, weight: .medium))
                 // The dark accent is light, so its label turns dark to stay readable.
                 .foregroundStyle(prominent && enabled ? (dark ? Color.black : Color.white) : enabled ? Color.primary : Color.secondary.opacity(0.55))
-                .padding(.horizontal, compact ? 8 : 12).padding(.vertical, compact ? 2 : 9)
+                .padding(.horizontal, horizontalPadding ?? (compact ? 8 : 12)).padding(.vertical, compact ? 2 : 9)
                 .background(background, in: RoundedRectangle(cornerRadius: radius))
                 .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(Color.primary.opacity(prominent && enabled ? 0 : enabled ? 0.09 : 0.04)))
                 .contentShape(RoundedRectangle(cornerRadius: radius))
