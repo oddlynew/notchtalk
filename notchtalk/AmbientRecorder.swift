@@ -222,6 +222,12 @@ final class AmbientRecorder {
         return builtInInputDevice()
     }
 
+    /// The microphone a recording keeps until it ends: the built-in one instead of a Bluetooth headset,
+    /// else the default input as it is now, so a headset connecting mid-recording does not take over.
+    nonisolated static func recordingInputDevice() -> AudioDeviceID? {
+        preferredInputDevice() ?? property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, AudioDeviceID(0))
+    }
+
     nonisolated static func builtInInputDevice() -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -256,7 +262,7 @@ final class AmbientRecorder {
             &device,
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
-        if status != noErr { NSLog("Ambient: could not switch to the built-in microphone (\(status))") }
+        if status != noErr { NSLog("Could not pin the microphone (\(status))") }
     }
 
     private nonisolated static func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ initial: T) -> T? {
