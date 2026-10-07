@@ -42,6 +42,8 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
     /// Set for recordings that did not come from the recording shortcut, e.g. "Ambient, 10 min".
     var label: String?
     var provider: TranscriptionProvider?
+    /// The model that produced the transcript. Entries from before it was recorded fall back to the provider's only model.
+    var model: String?
     var speakerRecognitionEnabled: Bool?
     var promptProvided: Bool
     var retryCount: Int
@@ -87,12 +89,22 @@ struct TranscriptionDiagnosticsEntry: Identifiable, Codable {
         self.retainedAudioExpiresAt = retainedAudioExpiresAt
         self.logs = logs
     }
+
+    /// "ElevenLabs · scribe_v2" for History, or just the provider when its model varied and was not recorded.
+    var modelDescription: String? {
+        provider.map { provider in
+            [provider.displayName, model ?? provider.fixedModel].compactMap { $0 }.joined(separator: " · ")
+        }
+    }
 }
 
 @MainActor
 @Observable
 final class TranscriptionDiagnosticsStore {
-    static let shared = TranscriptionDiagnosticsStore()
+    /// NOTCHTALK_HISTORY_FILE points a verification run at a fixture instead of Daniel's history.
+    static let shared = TranscriptionDiagnosticsStore(
+        storageURL: ProcessInfo.processInfo.environment["NOTCHTALK_HISTORY_FILE"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+    )
 
     private(set) var entries: [TranscriptionDiagnosticsEntry] = []
 
@@ -259,6 +271,7 @@ final class TranscriptionDiagnosticsStore {
         transcriptText: String,
         outputCharacterCount: Int,
         provider: TranscriptionProvider? = nil,
+        model: String? = nil,
         speakerRecognitionEnabled: Bool? = nil,
         promptProvided: Bool? = nil
     ) {
@@ -266,6 +279,7 @@ final class TranscriptionDiagnosticsStore {
             entry.status = .succeeded
             if let provider {
                 entry.provider = provider
+                entry.model = model ?? provider.fixedModel
                 entry.speakerRecognitionEnabled = provider == .elevenLabs ? (speakerRecognitionEnabled ?? false) : false
                 entry.promptProvided = provider == .openAI && (promptProvided ?? false)
             }
@@ -296,6 +310,18 @@ final class TranscriptionDiagnosticsStore {
             entry.errorMessage = nil
             entry.retryCount = 0
             entry.logs.append(.init(level: .info, message: reason))
+            if entry.logs.count > maxLogsPerEntry {
+                entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
+            }
+        }
+    }
+
+    /// A cancelled recording records on: the entry goes back to recording until the new part ends.
+    func resumeRecording(for id: UUID) {
+        mutateEntry(id) { entry in
+            entry.status = .recording
+            entry.errorMessage = nil
+            entry.logs.append(.init(level: .info, message: "Recording resumed after cancel"))
             if entry.logs.count > maxLogsPerEntry {
                 entry.logs.removeFirst(entry.logs.count - maxLogsPerEntry)
             }

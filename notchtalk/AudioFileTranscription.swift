@@ -93,6 +93,33 @@ enum AudioFileTranscription {
         guard export.status == .completed else { throw CocoaError(.fileWriteUnknown) }
     }
 
+    /// Writes `first` followed by `second` as one .m4a. Returns the length of `first`.
+    static func join(_ first: URL, _ second: URL, to destination: URL) async throws -> TimeInterval {
+        let composition = AVMutableComposition()
+        guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        var cursor = CMTime.zero
+        var firstDuration = CMTime.zero
+        for url in [first, second] {
+            let asset = AVURLAsset(url: url)
+            guard let source = try await asset.loadTracks(withMediaType: .audio).first else { throw CocoaError(.fileReadCorruptFile) }
+            let duration = try await asset.load(.duration)
+            try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: cursor)
+            if url == first { firstDuration = duration }
+            cursor = cursor + duration
+        }
+        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        export.outputURL = destination
+        export.outputFileType = .m4a
+        await export.export()
+        if let error = export.error { throw error }
+        guard export.status == .completed else { throw CocoaError(.fileWriteUnknown) }
+        return firstDuration.seconds
+    }
+
     nonisolated static func isAudioOrVideo(_ url: URL) -> Bool {
         UTType(filenameExtension: url.pathExtension)?.conforms(to: .audiovisualContent) == true
     }

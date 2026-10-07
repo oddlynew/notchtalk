@@ -28,7 +28,7 @@ final class CallRecorder {
 
     /// Set while a call is being recorded.
     private(set) var startedAt: Date?
-    /// Shown in the menu when calls can only be recorded from the microphone.
+    /// Shown in Settings under Record calls when a call was recorded on one side only.
     private(set) var problem: String?
     @ObservationIgnored private var watchTask: Task<Void, Never>?
     @ObservationIgnored private var micEngine: AVAudioEngine?

@@ -11,7 +11,7 @@ actor ElevenLabsTranscriptionService {
     typealias RetryHandler = @MainActor @Sendable (_ retryAttempt: Int, _ totalRetries: Int) async -> Void
     typealias LogHandler = @MainActor @Sendable (_ message: String, _ level: TranscriptionDiagnosticsEntry.LogLevel) async -> Void
 
-    private static let model = "scribe_v2"
+    nonisolated static let model = "scribe_v2"
     private static let retryableHTTPStatusCodes: Set<Int> = [408, 429, 500, 502, 503, 504]
     private let endpoint = URL(string: "https://api.elevenlabs.io/v1/speech-to-text")!
     private let maxRetries: Int

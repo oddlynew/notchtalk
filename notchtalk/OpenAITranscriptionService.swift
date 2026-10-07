@@ -10,9 +10,10 @@ actor OpenAITranscriptionService {
     typealias APIKeyProvider = @Sendable () -> String?
     typealias RetryHandler = @MainActor @Sendable (_ retryAttempt: Int, _ totalRetries: Int) async -> Void
     typealias LogHandler = @MainActor @Sendable (_ message: String, _ level: TranscriptionDiagnosticsEntry.LogLevel) async -> Void
+    typealias ModelHandler = @MainActor @Sendable (_ model: String) async -> Void
     typealias HedgeDelayCalculator = @Sendable (_ audioDuration: TimeInterval) -> TimeInterval
 
-    private static let primaryModelName = "gpt-4o-transcribe"
+    static let primaryModelName = "gpt-4o-transcribe"
     private static let retryableHTTPStatusCodes: Set<Int> = [408, 429, 500, 502, 503, 504]
     private let endpoint = URL(string: "https://api.openai.com/v1/audio/transcriptions")!
     private let model = OpenAITranscriptionService.primaryModelName
@@ -166,7 +167,8 @@ actor OpenAITranscriptionService {
         prompt: String?,
         audioDuration: TimeInterval? = nil,
         onRetry: RetryHandler? = nil,
-        onLog: LogHandler? = nil
+        onLog: LogHandler? = nil,
+        onModel: ModelHandler? = nil
     ) async throws -> String {
         guard let apiKey = apiKeyProvider() else {
             throw TranscriptionError.noAPIKey
@@ -278,6 +280,7 @@ actor OpenAITranscriptionService {
                     raceResult = RaceResult(model: model, text: text)
                 }
 
+                await onModel?(raceResult.model)
                 return raceResult.text
             } catch {
                 if Task.isCancelled {

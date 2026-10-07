@@ -22,6 +22,14 @@ enum LocalModel: String, Sendable {
         }
     }
 
+    /// Shown in History next to the provider.
+    nonisolated var modelID: String {
+        switch self {
+        case .parakeet: "parakeet-tdt-0.6b-v3"
+        case .phonon2: "Phonon-2"
+        }
+    }
+
     // Full precision on purpose: the 2-bit Phonon-2 build of this model garbled German.
     private static let parakeetRepo = "mlx-community/parakeet-tdt-0.6b-v3"
     private static let parakeetRevision = "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15"
