@@ -4,37 +4,31 @@
 //
 
 import AVFoundation
+import CoreAudio
 import Foundation
 
-/// Records through AVAudioEngine pinned to one microphone, chosen at start: with AirPods or another
-/// Bluetooth headset as default input that is the built-in one, so the headset keeps playing in full
-/// quality instead of dropping into call mode. A device change mid-recording never moves the input.
+/// Records straight from one microphone, chosen at start: with AirPods or another Bluetooth headset
+/// as default input that is the built-in one, so the headset keeps playing in full quality instead of
+/// dropping into call mode. A device change mid-recording never moves the input.
 @MainActor
 final class AudioRecorder: NSObject {
-    private var engine: AVAudioEngine?
+    private var microphone: Microphone?
     private var recordingURL: URL?
     private var smoothedLevel: CGFloat = 0
     private var session = 0
     private var writtenFrames: AVAudioFramePosition = 0
-    private var output: Output?
-
-    /// Holds the file the tap writes; releasing it finishes the .m4a.
-    private final class Output: @unchecked Sendable {
-        var file: AVAudioFile?
-        init(_ file: AVAudioFile) { self.file = file }
-    }
 
     var onAudioLevelUpdate: ((CGFloat) -> Void)?
 
     var recordedDuration: TimeInterval { Double(writtenFrames) / 16000 }
 
     var isRecording: Bool {
-        engine?.isRunning ?? false
+        microphone?.isRunning ?? false
     }
 
-    /// The engine keeps writing into the same file on resume, so paused time never enters the audio.
+    /// The microphone keeps writing into the same file on resume, so paused time never enters the audio.
     func pause() {
-        engine?.pause()
+        microphone?.pause()
         smoothedLevel = 0
         onAudioLevelUpdate?(0)
     }
@@ -42,8 +36,7 @@ final class AudioRecorder: NSObject {
     /// False keeps the caller paused rather than pretending to capture audio.
     /// With no recorder yet, a pause that never reached one is simply dropped.
     func resume() -> Bool {
-        guard let engine else { return true }
-        return (try? engine.start()) != nil
+        microphone?.resume() ?? true
     }
 
     func startRecording() async throws -> URL {
@@ -51,39 +44,26 @@ final class AudioRecorder: NSObject {
         let fileName = "notchtalk_recording_\(Date().timeIntervalSince1970).m4a"
         let url = tempDir.appendingPathComponent(fileName)
 
-        // 16kHz mono AAC is optimal for speech transcription (Whisper is trained on 16kHz)
-        // Medium quality ~48kbps keeps file sizes small while maintaining speech clarity
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 16000,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
-            AVEncoderBitRateKey: 48000
-        ]
-
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-        if let device = AmbientRecorder.recordingInputDevice() {
-            AmbientRecorder.pin(input, to: device)
-        }
-        let inputFormat = input.outputFormat(forBus: 0)
-        guard inputFormat.sampleRate > 0, let convert = AmbientRecorder.makeConverter(from: inputFormat) else {
-            AmbientRecorder.retire(engine)
-            throw CocoaError(.fileWriteUnknown)
-        }
-        let file = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatInt16, interleaved: true)
+        guard let device = AmbientRecorder.recordingInputDevice() else { throw CocoaError(.fileReadNoSuchFile) }
+        let writer = try Writer(url: url)
         session += 1
-        let output = Output(file)
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat, block: Self.makeTap(convert: convert, output: output, recorder: self, session: session))
+        let session = session
         do {
-            try engine.start()
+            microphone = try Microphone(device: device) { [weak self] samples in
+                guard let (frames, averagePower, peakPower) = writer.write(samples) else { return }
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.session == session else { return }
+                        self.writtenFrames = frames
+                        self.updateAudioLevel(averagePower: averagePower, peakPower: peakPower)
+                    }
+                }
+            }
         } catch {
-            AmbientRecorder.retire(engine)
             try? FileManager.default.removeItem(at: url)
             throw error
         }
-        self.engine = engine
-        self.output = output
+        microphone?.writer = writer
         recordingURL = url
         writtenFrames = 0
         smoothedLevel = 0
@@ -107,26 +87,34 @@ final class AudioRecorder: NSObject {
         recordingURL = nil
     }
 
-    /// Stops the engine first, so no tap writes any more, then releases the file, which completes it.
     private func finish() {
         session += 1
-        AmbientRecorder.retire(engine)
-        engine = nil
-        output?.file = nil
-        output = nil
+        microphone?.stop()
+        microphone = nil
     }
 
-    /// Runs on the engine's thread: writes 16 kHz mono and reports the level and length on the main actor.
-    private nonisolated static func makeTap(
-        convert: @escaping (AVAudioPCMBuffer) -> [Int16]?,
-        output: Output,
-        recorder: AudioRecorder,
-        session: Int
-    ) -> AVAudioNodeTapBlock {
-        { [weak recorder] input, _ in
-            guard let file = output.file, let samples = convert(input), !samples.isEmpty,
+    /// Writes 16 kHz mono samples as AAC. Releasing it finishes the .m4a.
+    final class Writer: @unchecked Sendable {
+        private var file: AVAudioFile?
+
+        init(url: URL) throws {
+            // 16kHz mono AAC is optimal for speech transcription (Whisper is trained on 16kHz)
+            // Medium quality ~48kbps keeps file sizes small while maintaining speech clarity
+            let settings: [String: Any] = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 16000,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+                AVEncoderBitRateKey: 48000
+            ]
+            file = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatInt16, interleaved: true)
+        }
+
+        /// Returns the frames written so far and the buffer's average and peak power in dB.
+        func write(_ samples: [Int16]) -> (AVAudioFramePosition, Float, Float)? {
+            guard let file, !samples.isEmpty,
                   let pcm = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(samples.count)),
-                  let channel = pcm.int16ChannelData?[0] else { return }
+                  let channel = pcm.int16ChannelData?[0] else { return nil }
             samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
             pcm.frameLength = AVAudioFrameCount(samples.count)
             do { try file.write(from: pcm) } catch { NSLog("Recording: could not write audio: \(error.localizedDescription)") }
@@ -137,15 +125,80 @@ final class AudioRecorder: NSObject {
                 sum += value * value
                 peak = max(peak, value)
             }
-            let averagePower = 20 * log10(max(sqrt(sum / Float(samples.count)), 1e-8))
-            let peakPower = 20 * log10(max(peak, 1e-8))
-            let frames = file.length
-            DispatchQueue.main.async { [weak recorder] in
-                MainActor.assumeIsolated {
-                    guard let recorder, recorder.session == session else { return }
-                    recorder.writtenFrames = frames
-                    recorder.updateAudioLevel(averagePower: averagePower, peakPower: peakPower)
-                }
+            return (file.length, 20 * log10(max(sqrt(sum / Float(samples.count)), 1e-8)), 20 * log10(max(peak, 1e-8)))
+        }
+
+        func close() { file = nil }
+    }
+
+    /// An IO proc on the microphone device itself. AVAudioEngine cannot hold a non-default input:
+    /// pinned to the built-in microphone while AirPods are the default, its tap kept the AirPods'
+    /// 24 kHz format, failed to install and recorded nothing, and the engine fell back to the default.
+    final class Microphone {
+        private let device: AudioDeviceID
+        private var ioProc: AudioDeviceIOProcID?
+        private let queue = DispatchQueue(label: "oddlynew.notchtalk.microphone")
+        private(set) var isRunning = false
+        /// Closed after the last buffer, once the device has stopped.
+        var writer: Writer?
+
+        /// `deliver` gets the microphone as 16 kHz mono samples, on a background queue.
+        init(device: AudioDeviceID, deliver: @escaping ([Int16]) -> Void) throws {
+            self.device = device
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreamFormat,
+                mScope: kAudioObjectPropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var description = AudioStreamBasicDescription()
+            var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &description) == noErr,
+                  let format = AVAudioFormat(streamDescription: &description),
+                  let convert = AmbientRecorder.makeConverter(from: format) else {
+                throw CocoaError(.fileReadUnknown)
+            }
+            var status = AudioDeviceCreateIOProcIDWithBlock(&ioProc, device, queue) { _, inputData, _, _, _ in
+                // The first input stream is the microphone; a device with more streams keeps the rest to itself.
+                let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
+                guard let first = buffers.first, first.mData != nil else { return }
+                var list = AudioBufferList(mNumberBuffers: 1, mBuffers: first)
+                guard let pcm = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: &list, deallocator: nil),
+                      let samples = convert(pcm) else { return }
+                deliver(samples)
+            }
+            guard status == noErr, let ioProc else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
+            status = AudioDeviceStart(device, ioProc)
+            guard status == noErr else {
+                AudioDeviceDestroyIOProcID(device, ioProc)
+                self.ioProc = nil
+                throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+            }
+            isRunning = true
+        }
+
+        func pause() {
+            guard let ioProc, isRunning else { return }
+            isRunning = AudioDeviceStop(device, ioProc) != noErr
+        }
+
+        func resume() -> Bool {
+            guard let ioProc else { return false }
+            if !isRunning { isRunning = AudioDeviceStart(device, ioProc) == noErr }
+            return isRunning
+        }
+
+        /// Stops the device, lets the last buffer finish writing, then completes the file.
+        func stop() {
+            guard let ioProc else { return }
+            AudioDeviceStop(device, ioProc)
+            isRunning = false
+            self.ioProc = nil
+            let (device, writer) = (device, writer)
+            queue.sync { writer?.close() }
+            // Core Audio can deadlock when an IO proc goes right after its device stops, so this waits a moment.
+            DispatchQueue.global().async {
+                usleep(150_000)
+                AudioDeviceDestroyIOProcID(device, ioProc)
             }
         }
     }
