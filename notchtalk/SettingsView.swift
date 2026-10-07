@@ -51,6 +51,8 @@ struct SettingsView: View {
     @State private var selectedTab: SettingsTab
     @State private var exportFeedbackMessage: String?
     @State private var exportFeedbackIsError = false
+    @State private var showPrompt = false
+    @State private var showTiming = false
 
     init(tab: SettingsTab = .transcripts) {
         _selectedTab = State(initialValue: tab)
@@ -59,15 +61,13 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Label("Notchtalk", systemImage: "waveform")
-                    .font(.system(size: 15, weight: .semibold))
-                    .padding(.horizontal, 10).padding(.bottom, 18)
                 navigationItem("Transcripts", icon: "list.bullet", tab: .transcripts)
                 navigationItem("Settings", icon: "gearshape", tab: .settings)
                 Spacer()
             }
-            .padding(.horizontal, 10).padding(.vertical, 18).frame(width: 170).background(.quaternary.opacity(0.35))
-            Divider()
+            .padding(.horizontal, 10).padding(.vertical, 16).frame(width: 150)
+            .background(.black.opacity(0.025))
+            .overlay(alignment: .trailing) { NotchtalkStyle.line.frame(width: 1) }
             Group {
                 switch selectedTab {
                 case .transcripts: TranscriptsView()
@@ -76,6 +76,9 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .font(.system(size: 13))
+        .foregroundStyle(NotchtalkStyle.ink)
+        .background(NotchtalkStyle.panel)
         .tint(NotchtalkStyle.accent)
         .frame(width: 820, height: 640)
         .navigationTitle("Notchtalk")
@@ -85,123 +88,159 @@ struct SettingsView: View {
         Button { selectedTab = tab } label: {
             Label(title, systemImage: icon)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(selectedTab == tab ? NotchtalkStyle.accent : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).padding(.vertical, 7)
-                .background(selectedTab == tab ? NotchtalkStyle.accent.opacity(0.10) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                .foregroundStyle(selectedTab == tab ? NotchtalkStyle.accent : NotchtalkStyle.ink)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 9).padding(.vertical, 7)
+                .background(selectedTab == tab ? NotchtalkStyle.accentSoft : .clear, in: RoundedRectangle(cornerRadius: 8))
                 .contentShape(Rectangle())
         }.buttonStyle(.plain)
         .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
     }
 
     private var settingsTab: some View {
-        Form {
-            Section("Transcription") {
-                Picker("Provider", selection: $settingsManager.transcriptionProvider) {
-                    ForEach(TranscriptionProvider.allCases) { provider in
-                        Text(provider.displayName).tag(provider)
+        ScrollView {
+            VStack(spacing: 14) {
+                SettingGroup("Transcription") {
+                    SettingRow(first: true) {
+                        Text("Provider")
+                        Spacer()
+                        SegmentedChoice(options: TranscriptionProvider.allCases.map { ($0, $0.displayName) }, selection: $settingsManager.transcriptionProvider)
+                    }
+                    if let model = settingsManager.transcriptionProvider.localModel {
+                        SettingRow {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(model.name) on this Mac")
+                                Text(localModelFooter(model)).font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
+                            }
+                            Spacer()
+                            localModelSection(model.installer)
+                        }
+                        .id(model)
+                        .onAppear { model.installer.refresh() }
+                    } else {
+                        apiKeySection
+                    }
+                    if settingsManager.transcriptionProvider == .openAI {
+                        SettingRow {
+                            Text("Prompt ") + Text("(optional)").font(.system(size: 11)).foregroundColor(NotchtalkStyle.muted)
+                            Spacer()
+                            Button(showPrompt ? "Done" : settingsManager.transcriptionPrompt.isEmpty ? "Add ›" : "Edit ›") { showPrompt.toggle() }
+                                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
+                        }
+                        if showPrompt {
+                            SettingRow {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    TextEditor(text: $settingsManager.transcriptionPrompt)
+                                        .font(.system(size: 12)).scrollContentBackground(.hidden)
+                                        .padding(4).background(NotchtalkStyle.chip, in: RoundedRectangle(cornerRadius: 7))
+                                        .frame(minHeight: 60, maxHeight: 120)
+                                    Text("Guides OpenAI, for example: “A technical discussion about Swift.”")
+                                        .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
+                                }
+                            }
+                        }
+                    } else if settingsManager.transcriptionProvider == .elevenLabs {
+                        switchRow("Label speakers (Speaker 1, Speaker 2, …)", isOn: $settingsManager.elevenLabsSpeakerRecognitionEnabled)
+                        switchRow("Match speakers from my ElevenLabs library", isOn: $settingsManager.elevenLabsSpeakerLibraryRecognitionEnabled)
+                            .disabled(!settingsManager.elevenLabsSpeakerRecognitionEnabled)
                     }
                 }
-                .pickerStyle(.segmented)
 
-                if let model = settingsManager.transcriptionProvider.localModel {
-                    LabeledContent("\(model.name) on this Mac") {
-                        localModelSection(model.installer)
+                SettingGroup("After recording") {
+                    switchRow("Paste at the cursor", isOn: $settingsManager.autoPasteEnabled, first: true)
+                        .help("Off: the transcript only goes to the clipboard.")
+                    switchRow("Press Enter after pasting", isOn: $settingsManager.sendWithEnter)
+                        .help("Sends the message when a held shortcut is released.")
+                }
+
+                SettingGroup("Listening in the background") {
+                    switchRow("Ambient", detail: "keeps the last minutes in memory only", isOn: $settingsManager.ambientEnabled, first: true)
+                    SettingRow {
+                        Text("Keep the last")
+                        Spacer()
+                        SegmentedChoice(options: [(5, "5"), (10, "10"), (20, "20 min")], selection: $settingsManager.ambientWindowMinutes)
                     }
-                    .id(model)
-                    .onAppear { model.installer.refresh() }
-                    Text(localModelFooter(model)).font(.caption).foregroundStyle(.secondary)
-                } else {
-                    apiKeySection
-                }
-
-                if settingsManager.transcriptionProvider == .openAI {
-                    DisclosureGroup("Prompt (optional)") {
-                        TextEditor(text: $settingsManager.transcriptionPrompt)
-                            .frame(minHeight: 60, maxHeight: 120)
-                            .font(.body)
-                        Text("Guides OpenAI, for example: “A technical discussion about Swift.”")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                } else if settingsManager.transcriptionProvider == .elevenLabs {
-                    Toggle("Label speakers (Speaker 1, Speaker 2, …)", isOn: $settingsManager.elevenLabsSpeakerRecognitionEnabled)
-                    Toggle("Match speakers from my ElevenLabs library", isOn: $settingsManager.elevenLabsSpeakerLibraryRecognitionEnabled)
-                        .disabled(!settingsManager.elevenLabsSpeakerRecognitionEnabled)
-                }
-            }
-
-            Section("After recording") {
-                Toggle("Paste at the cursor", isOn: $settingsManager.autoPasteEnabled)
-                    .help("Off: the transcript only goes to the clipboard.")
-                Toggle("Press Enter after pasting", isOn: $settingsManager.sendWithEnter)
-                    .help("Sends the message when a held shortcut is released.")
-            }
-
-            Section("Listening in the background") {
-                Toggle(isOn: $settingsManager.ambientEnabled) {
-                    Text("Ambient")
-                    Text("Keeps the last minutes in memory only, nothing is saved or sent until you ask.")
-                }
-                Picker("Keep the last", selection: $settingsManager.ambientWindowMinutes) {
-                    ForEach([5, 10, 20], id: \.self) { minutes in
-                        Text("\(minutes) min").tag(minutes)
+                    .disabled(!settingsManager.ambientEnabled)
+                    switchRow("Record calls", detail: "iPhone and FaceTime on this Mac", isOn: $settingsManager.callRecordingEnabled)
+                    if settingsManager.callRecordingEnabled, let problem = call.problem {
+                        SettingRow { Text(problem).font(.system(size: 11)).foregroundStyle(.orange) }
                     }
                 }
-                .pickerStyle(.segmented)
-                .disabled(!settingsManager.ambientEnabled)
-                Toggle(isOn: $settingsManager.callRecordingEnabled) {
-                    Text("Record calls")
-                    Text("Both sides of iPhone and FaceTime calls on this Mac.")
-                }
-                if settingsManager.callRecordingEnabled, let problem = call.problem {
-                    Text(problem).font(.caption).foregroundStyle(.orange)
-                }
-            }
 
-            Section("Shortcut") {
-                Text("Right ⌘: tap to start and tap again to stop, or hold to talk. Esc cancels.")
-                DisclosureGroup("Timing") {
-                    VStack(alignment: .leading) {
-                        LabeledContent("Hold mode after", value: "\(Int(settingsManager.startHoldDelay * 1000)) ms")
-                        Slider(value: $settingsManager.startHoldDelay, in: 0.2...2, step: 0.05)
-                            .accessibilityLabel("Hold mode threshold")
+                SettingGroup("Shortcut") {
+                    SettingRow(first: true) {
+                        Text("Right ⌘ tap starts, tap again stops. Hold to talk. Esc cancels.")
+                        Spacer()
+                        Button(showTiming ? "Done" : "Timing ›") { showTiming.toggle() }
+                            .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
                     }
-                    Picker("Non-hold mode", selection: $settingsManager.continuousFinishMode) {
-                        ForEach(ContinuousFinishMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
+                    if showTiming {
+                        SettingRow {
+                            Text("Hold mode after")
+                            Spacer()
+                            Slider(value: $settingsManager.startHoldDelay, in: 0.2...2, step: 0.05).frame(width: 160)
+                                .accessibilityLabel("Hold mode threshold")
+                            Text("\(Int(settingsManager.startHoldDelay * 1000)) ms").monospacedDigit().foregroundStyle(NotchtalkStyle.muted).frame(width: 56, alignment: .trailing)
+                        }
+                        SettingRow {
+                            Text("Non-hold mode")
+                            Spacer()
+                            Picker("Non-hold mode", selection: $settingsManager.continuousFinishMode) {
+                                ForEach(ContinuousFinishMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .labelsHidden().fixedSize()
+                        }
+                        SettingRow {
+                            Text("Hold to send for")
+                            Spacer()
+                            Slider(value: $settingsManager.finishHoldDelay, in: 0.2...2, step: 0.05).frame(width: 160)
+                                .accessibilityLabel("Hold to send threshold")
+                            Text("\(Int(settingsManager.finishHoldDelay * 1000)) ms").monospacedDigit().foregroundStyle(NotchtalkStyle.muted).frame(width: 56, alignment: .trailing)
                         }
                     }
-                    VStack(alignment: .leading) {
-                        LabeledContent("Hold to send for", value: "\(Int(settingsManager.finishHoldDelay * 1000)) ms")
-                        Slider(value: $settingsManager.finishHoldDelay, in: 0.2...2, step: 0.05)
-                            .accessibilityLabel("Hold to send threshold")
-                    }
+                    switchRow("Double-tap right ⌥ transcribes the ambient window", isOn: $settingsManager.ambientHotKeyEnabled)
+                        .disabled(!settingsManager.ambientEnabled)
                 }
-                Toggle("Double-tap right ⌥ transcribes the ambient window", isOn: $settingsManager.ambientHotKeyEnabled)
-                    .disabled(!settingsManager.ambientEnabled)
-            }
 
-            Section("Data") {
-                Text("Audio is kept for 24 hours, then deleted.")
-                HStack(spacing: 8) {
-                    if let exportFeedbackMessage {
-                        Text(exportFeedbackMessage)
-                            .font(.caption)
-                            .foregroundStyle(exportFeedbackIsError ? .red : .secondary)
-                            .lineLimit(1)
+                SettingGroup("Data") {
+                    SettingRow(first: true) { Text("Audio is kept for 24 hours, then deleted.") }
+                    SettingRow {
+                        if let exportFeedbackMessage {
+                            Text(exportFeedbackMessage)
+                                .font(.system(size: 11))
+                                .foregroundStyle(exportFeedbackIsError ? NotchtalkStyle.bad : NotchtalkStyle.muted)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Group {
+                            Button(DiagnosticsExportFormat.json.buttonTitle) { exportDiagnostics(.json) }
+                            Button(DiagnosticsExportFormat.csv.buttonTitle) { exportDiagnostics(.csv) }
+                        }
+                        .buttonStyle(QuietButtonStyle(size: .mini))
+                        .disabled(diagnosticsStore.entries.isEmpty)
                     }
-                    Spacer()
-                    Button(DiagnosticsExportFormat.json.buttonTitle) { exportDiagnostics(.json) }
-                    Button(DiagnosticsExportFormat.csv.buttonTitle) { exportDiagnostics(.csv) }
                 }
-                .disabled(diagnosticsStore.entries.isEmpty)
             }
+            .padding(.horizontal, 18).padding(.vertical, 14)
         }
-        .formStyle(.grouped)
         .onChange(of: settingsManager.transcriptionProvider) {
             showAPIKeyField = false
             apiKeyInput = ""
             saveError = nil
             showSaveSuccess = false
+        }
+    }
+
+    private func switchRow(_ title: String, detail: String? = nil, isOn: Binding<Bool>, first: Bool = false) -> some View {
+        SettingRow(first: first) {
+            if let detail {
+                Text(title) + Text(" · \(detail)").font(.system(size: 11)).foregroundColor(NotchtalkStyle.muted)
+            } else {
+                Text(title)
+            }
+            Spacer()
+            MiniSwitch(title: title, isOn: isOn)
         }
     }
 
@@ -336,72 +375,59 @@ struct SettingsView: View {
         switch installer.state {
         case .installed:
             Label("Installed", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(NotchtalkStyle.ok)
         case .installing(let step):
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text(step)
             }
         case .notInstalled, .failed:
-            HStack {
-                Text("Not installed")
-                Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
                 Button("Download and install") { installer.install() }
-                    .buttonStyle(.borderedProminent)
-            }
-            if case .failed(let message) = installer.state {
-                Text(message)
-                    .foregroundStyle(.red)
-                    .font(.caption)
+                    .buttonStyle(QuietButtonStyle(prominent: true, size: .mini))
+                if case .failed(let message) = installer.state {
+                    Text(message).font(.system(size: 11)).foregroundStyle(NotchtalkStyle.bad)
+                }
             }
         }
     }
 
     @ViewBuilder
     private var apiKeySection: some View {
-        if settingsManager.hasAPIKey && !showAPIKeyField {
-            HStack {
-                SecureField("API Key", text: .constant("••••••••••••••••••••"))
-                    .disabled(true)
-
+        SettingRow {
+            Text("API key")
+            Spacer()
+            if settingsManager.hasAPIKey && !showAPIKeyField {
+                Text("Saved in Keychain").font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
                 Button("Change") {
                     showAPIKeyField = true
                     apiKeyInput = ""
                 }
-                .buttonStyle(.bordered)
-            }
-        } else {
-            HStack {
-                SecureField("Enter your \(settingsManager.transcriptionProvider.displayName) API key", text: $apiKeyInput)
-                    .textFieldStyle(.roundedBorder)
-
-                Button(settingsManager.hasAPIKey ? "Update" : "Save") {
-                    saveAPIKey()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(apiKeyInput.isEmpty)
-
+                .buttonStyle(QuietButtonStyle(size: .mini))
+            } else {
+                SecureField("Your \(settingsManager.transcriptionProvider.displayName) API key", text: $apiKeyInput)
+                    .textFieldStyle(.plain).font(.system(size: 11))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(NotchtalkStyle.chip, in: RoundedRectangle(cornerRadius: 7))
+                    .frame(width: 240)
+                Button(settingsManager.hasAPIKey ? "Update" : "Save") { saveAPIKey() }
+                    .buttonStyle(QuietButtonStyle(prominent: true, size: .mini))
+                    .disabled(apiKeyInput.isEmpty)
                 if showAPIKeyField {
                     Button("Cancel") {
                         showAPIKeyField = false
                         apiKeyInput = ""
                         saveError = nil
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(QuietButtonStyle(size: .mini))
                 }
             }
         }
-
         if let error = saveError {
-            Text(error)
-                .foregroundStyle(.red)
-                .font(.caption)
+            SettingRow { Text(error).font(.system(size: 11)).foregroundStyle(NotchtalkStyle.bad) }
         }
-
         if showSaveSuccess {
-            Text("API key saved successfully")
-                .foregroundStyle(.green)
-                .font(.caption)
+            SettingRow { Text("API key saved").font(.system(size: 11)).foregroundStyle(NotchtalkStyle.ok) }
         }
     }
 
@@ -420,6 +446,43 @@ struct SettingsView: View {
         } catch {
             saveError = error.localizedDescription
         }
+    }
+}
+
+/// A bordered group of settings with a small uppercase title, as in the mockup.
+private struct SettingGroup<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold)).textCase(.uppercase).tracking(0.5)
+                .foregroundStyle(NotchtalkStyle.muted)
+                .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(NotchtalkStyle.line))
+    }
+}
+
+/// One line of a settings group, with a hairline above it unless it follows the title.
+private struct SettingRow<Content: View>: View {
+    var first = false
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(spacing: 10) { content }
+            .font(.system(size: 12))
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .frame(maxWidth: .infinity, minHeight: 31, alignment: .leading)
+            .overlay(alignment: .top) { if !first { NotchtalkStyle.line.frame(height: 1) } }
     }
 }
 

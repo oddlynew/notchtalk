@@ -28,34 +28,40 @@ struct MenuContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                Image(systemName: "waveform").font(.title2).foregroundStyle(NotchtalkStyle.accent)
-                    .frame(width: 40, height: 40).background(NotchtalkStyle.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Notchtalk").font(.system(size: 17, weight: .semibold))
-                    Text(status).font(.caption).foregroundStyle(.secondary)
+                Image(systemName: "waveform").font(.system(size: 20)).foregroundStyle(NotchtalkStyle.accent)
+                    .frame(width: 40, height: 40).background(NotchtalkStyle.accentSoft, in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Notchtalk").font(.system(size: 17, weight: .semibold)).foregroundStyle(NotchtalkStyle.ink)
+                    Text(status).font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
                 }
                 Spacer()
             }
             if !hasAccessibilityPermission {
                 Button("Allow keyboard access", systemImage: "keyboard", action: openAccessibilitySettings)
+                    .buttonStyle(QuietButtonStyle())
             }
             if !hasMicrophonePermission {
                 Button("Allow microphone", systemImage: "mic", action: requestMicrophonePermission)
+                    .buttonStyle(QuietButtonStyle())
             }
             LatestTranscriptCard()
             AmbientRow(hasMicrophonePermission: hasMicrophonePermission)
-            Divider()
             HStack {
-                Button("Open App", systemImage: "macwindow") { SettingsWindowController.show() }
+                Button("↗ Open App") { SettingsWindowController.show() }
+                    .buttonStyle(.plain)
                     .keyboardShortcut(",")
                 Spacer()
                 Menu {
                     Button("About Notchtalk", action: showAbout)
                     Button("Quit Notchtalk") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q")
-                } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).menuIndicator(.hidden).frame(width: 22)
-            }.buttonStyle(QuietButtonStyle()).font(.caption)
+                } label: { Text("⋯") }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            }
+            .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
+            .padding(.top, 12)
+            .overlay(alignment: .top) { NotchtalkStyle.line.frame(height: 1) }
         }
         .padding(20).frame(width: 330)
+        .background(NotchtalkStyle.panel)
         .tint(NotchtalkStyle.accent)
     }
 
@@ -83,21 +89,21 @@ struct LatestTranscriptCard: View {
         let entry = store.entries.first
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Text("Latest transcript").foregroundStyle(.secondary)
+                Text("Latest transcript").foregroundStyle(NotchtalkStyle.muted)
                 if let entry {
-                    Text("·").foregroundStyle(.tertiary)
+                    Text("·").foregroundStyle(NotchtalkStyle.muted)
                     EntryStatusLabel(status: entry.status)
                 }
             }
             .font(.system(size: 11, weight: .medium))
             Text(message(for: entry))
-                .font(.system(size: 12)).foregroundStyle(entry?.status == .succeeded ? .primary : .secondary)
-                .lineSpacing(3).lineLimit(3).frame(minHeight: 42, alignment: .topLeading).frame(maxWidth: .infinity, alignment: .leading)
+                .font(.system(size: 12)).foregroundStyle(NotchtalkStyle.ink)
+                .lineSpacing(2).lineLimit(3).frame(minHeight: 42, alignment: .topLeading).frame(maxWidth: .infinity, alignment: .leading)
             if let entry { actions(for: entry) }
         }
         .padding(14)
-        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: Self.cornerRadius))
-        .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius).strokeBorder(.primary.opacity(0.055)))
+        .background(.black.opacity(0.025), in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius).strokeBorder(NotchtalkStyle.line))
     }
 
     @ViewBuilder private func actions(for entry: TranscriptionDiagnosticsEntry) -> some View {
@@ -175,9 +181,8 @@ struct AmbientRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Toggle("Ambient", isOn: $settings.ambientEnabled)
-                .toggleStyle(.switch).controlSize(.mini).labelsHidden()
-            Text("Ambient").font(.system(size: 12))
+            MiniSwitch(title: "Ambient", isOn: $settings.ambientEnabled)
+            Text("Ambient").font(.system(size: 12)).foregroundStyle(settings.ambientEnabled ? NotchtalkStyle.ink : NotchtalkStyle.muted)
             if settings.ambientEnabled && !ambient.isRunning {
                 Circle().fill(.orange).frame(width: 6, height: 6)
                     .help(hasMicrophonePermission ? "Not listening, the microphone did not start" : "Needs microphone access")
@@ -187,13 +192,14 @@ struct AmbientRow: View {
             HStack(spacing: 2) {
                 ForEach(AmbientRecorder.recallChoices.filter { $0 <= settings.ambientWindowMinutes }, id: \.self) { minutes in
                     Button("\(minutes) min") { manager.transcribeAmbient(minutes: minutes, allowPaste: false) }
-                        .buttonStyle(QuietButtonStyle(compact: true, horizontalPadding: 4))
+                        .buttonStyle(QuietButtonStyle(size: .tiny))
                         .accessibilityLabel("Transcribe the last \(minutes) minutes")
                 }
             }
             .disabled(!settings.ambientEnabled || !ambient.isRunning || manager.state == .recording || manager.state == .processing)
         }
         .lineLimit(1)
+        .frame(height: 22)
         // Inset by the card's corner radius, so the row lines up with the rounding above it.
         .padding(.horizontal, LatestTranscriptCard.cornerRadius)
     }
@@ -206,7 +212,7 @@ struct EntryStatusLabel: View {
     var body: some View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 6, height: 6)
-            Text(title).foregroundStyle(color)
+            Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(color)
         }
         .accessibilityElement(children: .combine)
     }
@@ -223,11 +229,11 @@ struct EntryStatusLabel: View {
 
     private var color: Color {
         switch status {
-        case .recording: .red
+        case .recording: NotchtalkStyle.bad
         case .pending: NotchtalkStyle.accent
-        case .succeeded: .green
-        case .failed: .red
-        case .cancelled: .secondary
+        case .succeeded: NotchtalkStyle.ok
+        case .failed: NotchtalkStyle.bad
+        case .cancelled: NotchtalkStyle.muted
         }
     }
 }

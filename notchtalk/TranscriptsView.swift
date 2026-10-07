@@ -82,27 +82,28 @@ struct TranscriptsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            FileDropZone().padding([.horizontal, .top], 18)
-            HStack(spacing: 10) {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            FileDropZone().padding(.horizontal, 18).padding(.top, 14)
+            HStack(spacing: 6) {
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(NotchtalkStyle.muted)
                     TextField("Search", text: $searchText).textFieldStyle(.plain)
                 }
-                .font(.system(size: 12))
-                .padding(.horizontal, 8).padding(.vertical, 5)
-                .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
-                .frame(maxWidth: 220)
+                .font(.system(size: 11))
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(NotchtalkStyle.chip, in: RoundedRectangle(cornerRadius: 7))
+                .frame(width: 150)
                 Spacer(minLength: 8)
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     ForEach(Filter.allCases) { option in
                         Button(option.rawValue) { filter = option }
                             .buttonStyle(FilterChipStyle(selected: filter == option))
                     }
                 }
             }
-            .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 6)
+            .padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 6)
             content
         }
+        .foregroundStyle(NotchtalkStyle.ink)
         .onAppear {
             store.purgeExpiredRetainedAudio()
             library.reload()
@@ -137,14 +138,14 @@ struct TranscriptsView: View {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
                     ForEach(days(of: items), id: \.day) { group in
                         Text(dayTitle(group.day))
-                            .font(.system(size: 10, weight: .semibold)).textCase(.uppercase).foregroundStyle(.secondary)
-                            .padding(.horizontal, 8).padding(.top, 12).padding(.bottom, 4)
+                            .font(.system(size: 10, weight: .semibold)).textCase(.uppercase).tracking(0.5).foregroundStyle(NotchtalkStyle.muted)
+                            .padding(.horizontal, 8).padding(.top, 10).padding(.bottom, 4)
                         ForEach(group.items) { item in
                             row(item)
                         }
                     }
                 }
-                .padding(.horizontal, 10).padding(.bottom, 14)
+                .padding(.horizontal, 10).padding(.top, 4).padding(.bottom, 14)
             }
         }
     }
@@ -223,19 +224,17 @@ private struct EntryRow: View {
         let source = TranscriptsView.Source(entry)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Image(systemName: source.icon)
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28).background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).lineLimit(1).truncationMode(.tail)
+                SourceTile(icon: source.icon)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 13)).lineLimit(1).truncationMode(.tail)
                     HStack(spacing: 8) {
                         Text(entry.createdAt, format: .dateTime.hour().minute())
                         EntryStatusLabel(status: entry.status)
                         if let model = entry.modelDescription, entry.status != .recording {
-                            Text("· \(model)").font(.system(size: 10)).foregroundStyle(.tertiary)
+                            Text("·   \(model)").font(.system(size: 10)).opacity(0.7)
                         }
                     }
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
                 }
                 Spacer(minLength: 8)
                 actions
@@ -246,16 +245,16 @@ private struct EntryRow: View {
                         .font(.system(size: 12)).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Button("Details and logs ›", action: showDetails)
-                        .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
                 }
                 .padding(10)
-                .background(.background, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.08)))
+                .background(NotchtalkStyle.sheet, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(NotchtalkStyle.line))
                 .padding(.leading, 40)
             }
         }
-        .padding(.horizontal, 8).padding(.vertical, 8)
-        .background(.primary.opacity(expanded || hovered ? 0.035 : 0), in: RoundedRectangle(cornerRadius: 9))
+        .padding(.horizontal, 8).padding(.vertical, 9)
+        .background(.black.opacity(expanded || hovered ? 0.03 : 0), in: RoundedRectangle(cornerRadius: 9))
         .contentShape(Rectangle())
         .onTapGesture(perform: toggle)
         .onHover { hovered = $0 }
@@ -287,14 +286,16 @@ private struct EntryRow: View {
             } label: {
                 Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
             }
-            .buttonStyle(QuietButtonStyle(compact: true))
+            .buttonStyle(QuietButtonStyle(size: .mini))
             .disabled(text.isEmpty)
             Button {
                 manager.retranscribe(diagnosticsID: entry.id, reason: "Transcribe again from the app")
             } label: {
-                Image(systemName: "arrow.clockwise").frame(width: 14)
+                Image(systemName: "arrow.clockwise").font(.system(size: 12)).frame(width: 28, height: 28)
+                    .background(NotchtalkStyle.chip, in: RoundedRectangle(cornerRadius: 7))
+                    .contentShape(RoundedRectangle(cornerRadius: 7))
             }
-            .buttonStyle(QuietButtonStyle(compact: true))
+            .buttonStyle(.plain)
             .disabled(busy || !hasAudio || entry.status == .recording || entry.status == .pending)
             .help(hasAudio ? "Transcribe again" : "The audio is kept for 24 hours and is gone now")
             .accessibilityLabel("Transcribe again")
@@ -310,30 +311,39 @@ private struct MemoRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "waveform")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
-                .frame(width: 28, height: 28).background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Voice memo · \(memo.title)").lineLimit(1)
+            SourceTile(icon: "waveform")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Voice memo · \(memo.title)").font(.system(size: 13)).lineLimit(1)
                 HStack(spacing: 8) {
                     Text(memo.date, format: .dateTime.hour().minute())
                     if let duration = memo.duration {
                         Text(Duration.seconds(duration), format: .time(pattern: duration >= 3600 ? .hourMinuteSecond : .minuteSecond))
                     }
-                    Text("Not transcribed")
+                    Text("Not transcribed").fontWeight(.medium)
                 }
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
             }
             Spacer(minLength: 8)
             if library.preparing.contains(memo.id) {
                 ProgressView().controlSize(.small)
             } else {
                 Button("Transcribe") { library.transcribe(memo) }
-                    .buttonStyle(QuietButtonStyle(prominent: true, compact: true))
+                    .buttonStyle(QuietButtonStyle(prominent: true, size: .mini))
                     .disabled(FileDrop.shared.isBusy || !SettingsManager.shared.transcriptionProvider.isReady)
             }
         }
-        .padding(.horizontal, 8).padding(.vertical, 8)
+        .padding(.horizontal, 8).padding(.vertical, 9)
+    }
+}
+
+/// Where an entry came from, as a small tile at the start of its row.
+private struct SourceTile: View {
+    let icon: String
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: 13)).foregroundStyle(NotchtalkStyle.ink)
+            .frame(width: 28, height: 28).background(NotchtalkStyle.chip, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -344,9 +354,10 @@ private struct FilterChipStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(selected ? Color(nsColor: .windowBackgroundColor) : .primary)
+            .foregroundStyle(selected ? NotchtalkStyle.panel : NotchtalkStyle.ink)
             .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(selected ? AnyShapeStyle(Color.primary) : AnyShapeStyle(Color.primary.opacity(configuration.isPressed ? 0.12 : 0.06)), in: Capsule())
+            .background(selected ? NotchtalkStyle.ink : NotchtalkStyle.chip, in: Capsule())
+            .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(Capsule())
     }
 }

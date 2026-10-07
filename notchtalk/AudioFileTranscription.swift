@@ -237,17 +237,24 @@ struct FileDropZone: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 10) {
-            icon.font(.system(size: 16)).frame(width: 20)
-            Text(message).lineLimit(2).truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Choose File…") { choosing = true }
+        HStack(spacing: 12) {
+            icon.font(.system(size: 20)).frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(message).font(.system(size: 13, weight: .semibold)).foregroundStyle(NotchtalkStyle.ink)
+                    .lineLimit(2).truncationMode(.middle)
+                if drop.status == .idle && !drop.hovering {
+                    Text("m4a, mp3, wav, mp4, mov and more. The transcript lands here and on the clipboard.")
+                        .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Choose file…") { choosing = true }.buttonStyle(QuietButtonStyle())
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
-        .background(NotchtalkStyle.accent.opacity(drop.hovering ? 0.10 : 0.03), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .background(NotchtalkStyle.accent.opacity(drop.hovering ? 0.10 : 0.03), in: RoundedRectangle(cornerRadius: 12))
         .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(drop.hovering ? NotchtalkStyle.accent : .secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(drop.hovering ? NotchtalkStyle.accent : NotchtalkStyle.ink.opacity(0.18), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
         }
         .dropDestination(for: URL.self) { urls, _ in drop.transcribe(urls) } isTargeted: { drop.hovering = $0 }
         .fileImporter(isPresented: $choosing, allowedContentTypes: [.audiovisualContent]) { result in
@@ -278,7 +285,7 @@ struct FileDropZone: View {
                 }
             case .done: Image(systemName: "doc.on.clipboard").foregroundStyle(NotchtalkStyle.accent)
             case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
-            case .idle: Image(systemName: "arrow.down.doc").foregroundStyle(.secondary)
+            case .idle: Image(systemName: "arrow.down.doc").foregroundStyle(NotchtalkStyle.accent)
             }
         }
     }
@@ -286,7 +293,7 @@ struct FileDropZone: View {
     private var message: String {
         if drop.hovering { return drop.isBusy ? "Busy, drop again in a moment" : "Drop to transcribe" }
         switch drop.status {
-        case .idle: return "Drop an audio or video file here to transcribe it"
+        case .idle: return "Drop an audio or video file"
         case .reading(let name): return "Reading \(name)"
         case .transcribing(let name): return "\(manager.processingStatusText) \(name)"
         case .done(let name): return "Transcript of \(name) copied"
