@@ -101,7 +101,8 @@ struct TranscriptsView: View {
                 }
             }
             .padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 6)
-            content
+            // An empty state is only as big as its text: it fills the rest, so the page stays at the top.
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .foregroundStyle(NotchtalkStyle.ink)
         .onAppear {
