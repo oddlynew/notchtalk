@@ -120,6 +120,51 @@ enum AudioFileTranscription {
         return firstDuration.seconds
     }
 
+    /// The files behind dropped items. A Finder file comes as its URL. Voice Memos, Mail or Safari
+    /// only promise a file, so its audio is copied to a temporary file first, which the system
+    /// deletes in time.
+    nonisolated static func droppedFiles(_ providers: [NSItemProvider]) async -> [URL] {
+        var urls: [URL] = []
+        for provider in providers {
+            if let url = await fileURL(of: provider) {
+                urls.append(url)
+            } else if let url = await promisedFile(of: provider) {
+                urls.append(url)
+            }
+        }
+        return urls
+    }
+
+    private nonisolated static func fileURL(of provider: NSItemProvider) async -> URL? {
+        guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) else { return nil }
+        return await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+                let url = (item as? URL) ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                continuation.resume(returning: url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil })
+            }
+        }
+    }
+
+    private nonisolated static func promisedFile(of provider: NSItemProvider) async -> URL? {
+        guard let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .audiovisualContent) == true }) else { return nil }
+        return await withCheckedContinuation { continuation in
+            // The file only lives while this handler runs.
+            provider.loadFileRepresentation(forTypeIdentifier: type) { file, _ in
+                guard let file else { return continuation.resume(returning: nil) }
+                let copy = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                    .appendingPathComponent(provider.suggestedName.map { $0.hasSuffix(".\(file.pathExtension)") ? $0 : "\($0).\(file.pathExtension)" } ?? file.lastPathComponent)
+                do {
+                    try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try FileManager.default.copyItem(at: file, to: copy)
+                    continuation.resume(returning: copy)
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
     nonisolated static func isAudioOrVideo(_ url: URL) -> Bool {
         UTType(filenameExtension: url.pathExtension)?.conforms(to: .audiovisualContent) == true
     }
@@ -184,7 +229,7 @@ final class FileDrop {
         hovering = false
         attempts += 1
         rejection = nil
-        guard let url = urls.first else { return false }
+        guard let url = urls.first else { return reject("Couldn't read the dropped file. Try Choose File… instead.") }
         guard urls.count == 1 else { return reject("Drop one file at a time.") }
         guard AudioFileTranscription.isAudioOrVideo(url) else {
             return reject("\(url.lastPathComponent) has no sound to transcribe. Try an audio or video file.")
@@ -256,7 +301,10 @@ struct FileDropZone: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(drop.hovering ? NotchtalkStyle.accent : NotchtalkStyle.ink.opacity(0.18), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
         }
-        .dropDestination(for: URL.self) { urls, _ in drop.transcribe(urls) } isTargeted: { drop.hovering = $0 }
+        .onDrop(of: [.fileURL, .audiovisualContent], isTargeted: Binding { drop.hovering } set: { drop.hovering = $0 }) { providers in
+            Task { drop.transcribe(await AudioFileTranscription.droppedFiles(providers)) }
+            return true
+        }
         .fileImporter(isPresented: $choosing, allowedContentTypes: [.audiovisualContent]) { result in
             if case .success(let url) = result { drop.transcribe([url]) }
         }
