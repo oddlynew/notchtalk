@@ -66,8 +66,6 @@ final class NotchStateManager {
     private(set) var activeDiagnosticsID: UUID?
     /// A cancelled History entry that records on, and a copy of its earlier audio to join in front.
     private var resumedEntry: (id: UUID, earlier: URL)?
-    /// The model OpenAI answered with on the current run: the primary one or its fallback.
-    private var openAIModel: String?
 
     init() {
         audioRecorder.onAudioLevelUpdate = { [weak self] level in
@@ -568,9 +566,10 @@ final class NotchStateManager {
 
     /// Cuts the newest `minutes` out of the ambient window and transcribes them the way History
     /// re-transcribes: same provider, retries and timeouts, never Enter. The menu passes
-    /// allowPaste false because its own panel holds the keyboard focus a paste would land in.
+    /// allowPaste false because its own panel holds the keyboard focus a paste would land in; its
+    /// recall then runs in the app's queue, next to a recording, and lands on the clipboard.
     func transcribeAmbient(minutes: Int, allowPaste: Bool) {
-        guard state != .recording, state != .processing else { return }
+        guard !allowPaste || (state != .recording && state != .processing) else { return }
         let samples = AmbientRecorder.shared.buffer.last(minutes * 60 * AmbientBuffer.sampleRate)
         guard !samples.isEmpty else { return }
         let seconds = Double(samples.count) / Double(AmbientBuffer.sampleRate)
@@ -599,6 +598,10 @@ final class NotchStateManager {
                 label: "Ambient, \(Int((seconds / 60).rounded(.up))) min"
             )
             diagnosticsStore.retainAudio(sourceURL: url, for: id)
+            guard allowPaste else {
+                TranscriptionQueue.shared.transcribe(id, audioDuration: seconds, reason: "Ambient recall: last \(Int(seconds)) s", copyWhenDone: true)
+                return
+            }
             // A recording that started while we encoded wins; the audio waits in History.
             guard state != .recording, state != .processing else {
                 diagnosticsStore.markFailed(for: id, message: "Busy with another recording; re-transcribe from History")
@@ -751,7 +754,8 @@ final class NotchStateManager {
         }
     }
 
-    private func transcribe(
+    /// One transcription with the given provider; the shortcut's runs and the app's queue both send through here.
+    func transcribe(
         audioURL: URL,
         prompt: String?,
         provider: TranscriptionProvider,
@@ -762,16 +766,17 @@ final class NotchStateManager {
     ) async throws -> (text: String, model: String?) {
         switch provider {
         case .openAI:
-            openAIModel = nil
+            // The model OpenAI answered with on this run: the primary one or its fallback.
+            let answered = AnsweredModel()
             let text = try await openAITranscriptionService.transcribe(
                 audioURL: audioURL,
                 prompt: prompt,
                 audioDuration: audioDuration,
                 onRetry: onRetry,
                 onLog: onLog,
-                onModel: { [weak self] in self?.openAIModel = $0 }
+                onModel: { answered.name = $0 }
             )
-            return (text, openAIModel)
+            return (text, answered.name)
         case .elevenLabs:
             return (try await elevenLabsTranscriptionService.transcribe(
                 audioURL: audioURL,
@@ -837,4 +842,9 @@ final class NotchStateManager {
         processingTimerTask = nil
         processingControlsAvailable = false
     }
+}
+
+@MainActor
+private final class AnsweredModel {
+    var name: String?
 }

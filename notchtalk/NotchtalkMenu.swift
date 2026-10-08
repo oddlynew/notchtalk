@@ -104,7 +104,7 @@ struct LatestTranscriptCard: View {
                 }
                 if let entry {
                     Text("·").foregroundStyle(NotchtalkStyle.muted)
-                    EntryStatusLabel(status: entry.status)
+                    EntryStatusLabel(status: entry.status, queued: TranscriptionQueue.shared.isQueued(entry.id))
                 }
                 Spacer(minLength: 4)
                 if entries.count > 1 {
@@ -144,7 +144,7 @@ struct LatestTranscriptCard: View {
             case .succeeded:
                 Button("Retry", systemImage: "arrow.clockwise") { retry(entry) }
                     .buttonStyle(QuietButtonStyle())
-                    .disabled(!idle || !hasAudio)
+                    .disabled(!hasAudio)
                 Button { copy(entry) } label: {
                     Label(copiedID == entry.id ? "Copied" : "Copy", systemImage: copiedID == entry.id ? "checkmark" : "doc.on.doc")
                         .frame(maxWidth: .infinity)
@@ -155,7 +155,7 @@ struct LatestTranscriptCard: View {
                     Label("Retry", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(QuietButtonStyle(prominent: true))
-                .disabled(!idle || !hasAudio)
+                .disabled(!hasAudio)
             case .cancelled:
                 Button("Resume", systemImage: "play.fill") { manager.resume(diagnosticsID: entry.id) }
                     .buttonStyle(QuietButtonStyle())
@@ -164,7 +164,7 @@ struct LatestTranscriptCard: View {
                     Label("Transcribe", systemImage: "waveform").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(QuietButtonStyle(prominent: true))
-                .disabled(!idle || !hasAudio)
+                .disabled(!hasAudio)
             case .recording, .pending:
                 Button {} label: {
                     Label("Copy", systemImage: "doc.on.doc").frame(maxWidth: .infinity)
@@ -185,7 +185,9 @@ struct LatestTranscriptCard: View {
         case .failed: return "Couldn't transcribe \(subject). Details are in the app."
         case .cancelled: return "You cancelled \(subject)."
         case .recording: return "Recording…"
-        case .pending: return "\(manager.processingStatusText) \(subject)…"
+        case .pending:
+            if TranscriptionQueue.shared.isQueued(entry.id) { return "Waiting to transcribe \(subject)…" }
+            return "\(manager.activeDiagnosticsID == entry.id ? manager.processingStatusText : "Transcribing") \(subject)…"
         }
     }
 
@@ -197,7 +199,7 @@ struct LatestTranscriptCard: View {
 
     /// The menu holds the keyboard focus, so a paste would land in it: the transcript goes to the clipboard.
     private func retry(_ entry: TranscriptionDiagnosticsEntry) {
-        manager.retranscribe(diagnosticsID: entry.id, reason: "Retry from the menu", allowPaste: false)
+        TranscriptionQueue.shared.transcribe(entry.id, reason: "Retry from the menu", copyWhenDone: true)
     }
 }
 
@@ -226,7 +228,7 @@ struct AmbientRow: View {
                         .accessibilityLabel("Transcribe the last \(minutes) minutes")
                 }
             }
-            .disabled(!settings.ambientEnabled || !ambient.isRunning || manager.state == .recording || manager.state == .processing)
+            .disabled(!settings.ambientEnabled || !ambient.isRunning)
         }
         .lineLimit(1)
         .frame(height: 22)
@@ -238,6 +240,8 @@ struct AmbientRow: View {
 /// A coloured dot and one word for where an entry stands.
 struct EntryStatusLabel: View {
     let status: TranscriptionDiagnosticsEntry.Status
+    /// Waiting in the app's queue for a free slot.
+    var queued = false
 
     var body: some View {
         HStack(spacing: 4) {
@@ -250,7 +254,7 @@ struct EntryStatusLabel: View {
     private var title: String {
         switch status {
         case .recording: "Recording"
-        case .pending: "Transcribing"
+        case .pending: queued ? "Queued" : "Transcribing"
         case .succeeded: "Done"
         case .failed: "Failed"
         case .cancelled: "Cancelled"
@@ -260,7 +264,7 @@ struct EntryStatusLabel: View {
     private var color: Color {
         switch status {
         case .recording: NotchtalkStyle.bad
-        case .pending: NotchtalkStyle.accent
+        case .pending: queued ? NotchtalkStyle.muted : NotchtalkStyle.accent
         case .succeeded: NotchtalkStyle.ok
         case .failed: NotchtalkStyle.bad
         case .cancelled: NotchtalkStyle.muted

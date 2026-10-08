@@ -93,7 +93,7 @@ final class VoiceMemoLibrary {
 
     /// Sends a memo through the shared file path; the transcript lands in History and on the clipboard.
     func transcribe(_ memo: VoiceMemo) {
-        guard !FileDrop.shared.isBusy else { return }
+        guard !preparing.contains(memo.id) else { return }
         preparing.insert(memo.id)
         Task {
             defer { self.preparing.remove(memo.id) }

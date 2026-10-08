@@ -21,9 +21,9 @@ enum AudioFileTranscription {
         label: String,
         reason: String,
         duration: TimeInterval?,
+        copyWhenDone: Bool = false,
         prepare: (URL) async throws -> Void
     ) async -> UUID {
-        let notch = NotchStateManager.shared
         let store = TranscriptionDiagnosticsStore.shared
         // retainAudio moves its source, so it gets a copy and the original file stays put.
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_file_\(UUID().uuidString).m4a")
@@ -56,14 +56,7 @@ enum AudioFileTranscription {
         guard store.retainAudio(sourceURL: copy, for: id) != nil else {
             return fail("Could not keep a copy of the audio")
         }
-        guard notch.state != .recording, notch.state != .processing else {
-            return fail("Notchtalk was busy with another recording; transcribe it again from History")
-        }
-        // The notch's own missing-key path would leave this entry pending.
-        guard provider.isReady else {
-            return fail(provider.localModel != nil ? provider.notReadyMessage : "No API key for \(provider.displayName)")
-        }
-        notch.retranscribe(diagnosticsID: id, audioDuration: duration, reason: reason, allowPaste: false)
+        TranscriptionQueue.shared.transcribe(id, audioDuration: duration, reason: reason, copyWhenDone: copyWhenDone)
         return id
     }
 
@@ -218,10 +211,8 @@ final class FileDrop {
         }
     }
 
-    var isBusy: Bool {
-        let notch = NotchStateManager.shared.state
-        return reading || !VoiceMemoLibrary.shared.preparing.isEmpty || notch == .recording || notch == .processing
-    }
+    /// A drop is still being read. Transcribing runs in the queue and blocks nothing.
+    var isBusy: Bool { reading }
 
     /// Takes the first dropped file. Returns false when nothing was started.
     @discardableResult
@@ -234,7 +225,7 @@ final class FileDrop {
         guard AudioFileTranscription.isAudioOrVideo(url) else {
             return reject("\(url.lastPathComponent) has no sound to transcribe. Try an audio or video file.")
         }
-        guard !isBusy else { return reject("Notchtalk is busy. Drop the file again when it's done.") }
+        guard !isBusy else { return reject("Still reading the last file. Drop again in a moment.") }
         name = url.lastPathComponent
         entryID = nil
         outcome = nil
@@ -245,7 +236,8 @@ final class FileDrop {
                 source: url,
                 label: "File: \(url.lastPathComponent)",
                 reason: "Dropped file \(url.lastPathComponent)",
-                duration: duration.flatMap { $0.isFinite ? $0 : nil }
+                duration: duration.flatMap { $0.isFinite ? $0 : nil },
+                copyWhenDone: true
             ) { try await AudioFileTranscription.exportAudio(of: url, to: $0) }
             reading = false
         }

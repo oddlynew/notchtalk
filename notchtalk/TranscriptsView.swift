@@ -230,7 +230,7 @@ private struct EntryRow: View {
                     Text(title).font(.system(size: 12)).lineLimit(3).truncationMode(.tail)
                     HStack(spacing: 8) {
                         Text(entry.createdAt, format: .dateTime.hour().minute())
-                        EntryStatusLabel(status: entry.status)
+                        EntryStatusLabel(status: entry.status, queued: TranscriptionQueue.shared.isQueued(entry.id))
                         if let model = entry.modelDescription, entry.status != .recording {
                             Text("·   \(model)").font(.system(size: 10)).opacity(0.7)
                         }
@@ -273,7 +273,6 @@ private struct EntryRow: View {
     }
 
     @ViewBuilder private var actions: some View {
-        let busy = manager.state == .recording || manager.state == .processing
         let hasAudio = store.retainedAudioURL(for: entry.id) != nil
         let text = entry.transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         HStack(spacing: 6) {
@@ -290,14 +289,14 @@ private struct EntryRow: View {
             .buttonStyle(QuietButtonStyle(size: .mini))
             .disabled(text.isEmpty)
             Button {
-                manager.retranscribe(diagnosticsID: entry.id, reason: "Transcribe again from the app")
+                TranscriptionQueue.shared.transcribe(entry.id, reason: "Transcribe again from the app")
             } label: {
                 Image(systemName: "arrow.clockwise").font(.system(size: 12)).frame(width: 28, height: 28)
                     .background(NotchtalkStyle.chip, in: RoundedRectangle(cornerRadius: 7))
                     .contentShape(RoundedRectangle(cornerRadius: 7))
             }
             .buttonStyle(.plain)
-            .disabled(busy || !hasAudio || entry.status == .recording || entry.status == .pending)
+            .disabled(!hasAudio || entry.status == .recording || entry.status == .pending)
             .help(hasAudio ? "Transcribe again" : "The audio is kept for 24 hours and is gone now")
             .accessibilityLabel("Transcribe again")
         }
@@ -330,7 +329,7 @@ private struct MemoRow: View {
             } else {
                 Button("Transcribe") { library.transcribe(memo) }
                     .buttonStyle(QuietButtonStyle(prominent: true, size: .mini))
-                    .disabled(FileDrop.shared.isBusy || !SettingsManager.shared.transcriptionProvider.isReady)
+                    .disabled(!SettingsManager.shared.transcriptionProvider.isReady)
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 9)
