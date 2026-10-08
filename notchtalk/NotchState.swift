@@ -64,6 +64,8 @@ final class NotchStateManager {
     private var currentRecordingDuration: TimeInterval?
     private var recordingAllowsEnter: Bool { (currentRecordingDuration ?? 0) >= 0.5 }
     private(set) var activeDiagnosticsID: UUID?
+    /// A cancelled History entry that records on, and a copy of its earlier audio to join in front.
+    private var resumedEntry: (id: UUID, earlier: URL)?
 
     init() {
         audioRecorder.onAudioLevelUpdate = { [weak self] level in
@@ -93,7 +95,22 @@ final class NotchStateManager {
         }
     }
 
-    func startRecording() {
+    /// Records on after a cancel, as if the cancel had been a pause: when this part ends, the earlier
+    /// audio goes in front of it and the entry is transcribed as one recording.
+    func resume(diagnosticsID id: UUID) {
+        guard state != .recording, state != .processing,
+              let retained = diagnosticsStore.retainedAudioURL(for: id),
+              FileManager.default.fileExists(atPath: retained.path) else { return }
+        // A copy: the new part is retained under the same name when it ends.
+        let earlier = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_earlier_\(UUID().uuidString).m4a")
+        guard (try? FileManager.default.copyItem(at: retained, to: earlier)) != nil else { return }
+        processingTask?.cancel()
+        reset()
+        startRecording(resuming: (id, earlier))
+    }
+
+    func startRecording(resuming: (id: UUID, earlier: URL)? = nil) {
+        resumedEntry = resuming
         continuousFinishMode = SettingsManager.shared.continuousFinishMode
         pendingSubmit = false
         canToggleProcessingEnter = false
@@ -106,7 +123,7 @@ final class NotchStateManager {
         let provider = SettingsManager.shared.transcriptionProvider
         guard provider.isReady else {
             state = .error(provider.notReadyMessage)
-            SettingsWindowController.show()
+            SettingsWindowController.show(tab: .settings)
 
             processingTask?.cancel()
             processingTask = Task {
@@ -138,11 +155,16 @@ final class NotchStateManager {
                 // Pausing can win the race against the recorder coming up.
                 if isPaused { audioRecorder.pause() }
                 currentRecordingURL = recordingURL
-                activeDiagnosticsID = diagnosticsStore.startRecording(
-                    audioURL: recordingURL,
-                    provider: provider,
-                    speakerRecognitionEnabled: speakerRecognitionEnabled
-                )
+                if let resuming {
+                    diagnosticsStore.resumeRecording(for: resuming.id)
+                    activeDiagnosticsID = resuming.id
+                } else {
+                    activeDiagnosticsID = diagnosticsStore.startRecording(
+                        audioURL: recordingURL,
+                        provider: provider,
+                        speakerRecognitionEnabled: speakerRecognitionEnabled
+                    )
+                }
 
                 // Update duration timer
                 while !Task.isCancelled && (audioRecorder.isRecording || isPaused) {
@@ -153,6 +175,7 @@ final class NotchStateManager {
                 }
             } catch {
                 await MainActor.run {
+                    self.dropResumedEntry()
                     AudioDuckingService.shared.endDucking()
                     self.isPaused = false
                     self.state = .error("Mic error")
@@ -269,17 +292,24 @@ final class NotchStateManager {
         ) ?? recordingURL
         currentRecordingURL = transcriptionAudioURL
         activeDiagnosticsID = diagnosticsID
-        diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
+        let resumed = resumedEntry
+        resumedEntry = nil
         startProcessingTimer()
 
         processingTask = Task {
             do {
-                let transcription = try await transcribe(
+                var audioDuration: TimeInterval? = capturedRecordingDuration
+                if let resumed {
+                    audioDuration = try await joinEarlierAudio(resumed.earlier, before: transcriptionAudioURL, for: diagnosticsID)
+                        .map { $0 + capturedRecordingDuration }
+                }
+                diagnosticsStore.log("Uploading audio payload", for: diagnosticsID)
+                let (transcription, model) = try await transcribe(
                     audioURL: transcriptionAudioURL,
                     prompt: prompt,
                     provider: provider,
                     speakerRecognitionEnabled: speakerRecognitionEnabled,
-                    audioDuration: capturedRecordingDuration,
+                    audioDuration: audioDuration,
                     onRetry: { [weak self] attempt, totalRetries in
                         self?.retryAttempt = attempt
                         self?.totalRetries = totalRetries
@@ -298,6 +328,7 @@ final class NotchStateManager {
                     transcriptText: transcription,
                     outputCharacterCount: transcription.count,
                     provider: provider,
+                    model: model,
                     speakerRecognitionEnabled: speakerRecognitionEnabled,
                     promptProvided: prompt != nil
                 )
@@ -387,7 +418,7 @@ final class NotchStateManager {
 
         processingTask = Task {
             do {
-                let transcription = try await transcribe(
+                let (transcription, model) = try await transcribe(
                     audioURL: url,
                     prompt: prompt,
                     provider: provider,
@@ -411,6 +442,7 @@ final class NotchStateManager {
                     transcriptText: transcription,
                     outputCharacterCount: transcription.count,
                     provider: provider,
+                    model: model,
                     speakerRecognitionEnabled: speakerRecognitionEnabled,
                     promptProvided: prompt != nil
                 )
@@ -478,7 +510,14 @@ final class NotchStateManager {
                 level: .warning,
                 for: diagnosticsID
             )
-            retainRecordingIfNeeded(recordingURL, diagnosticsID: diagnosticsID)
+            if let resumed = resumedEntry {
+                // Both parts stay together, so a later resume or transcribe starts from all of it.
+                let retained = diagnosticsStore.retainAudio(sourceURL: recordingURL, for: diagnosticsID) ?? recordingURL
+                Task { _ = try? await joinEarlierAudio(resumed.earlier, before: retained, for: diagnosticsID) }
+                resumedEntry = nil
+            } else {
+                retainRecordingIfNeeded(recordingURL, diagnosticsID: diagnosticsID)
+            }
             diagnosticsStore.markCancelled(for: diagnosticsID, reason: reason)
         } else {
             audioRecorder.cancelRecording()
@@ -527,9 +566,10 @@ final class NotchStateManager {
 
     /// Cuts the newest `minutes` out of the ambient window and transcribes them the way History
     /// re-transcribes: same provider, retries and timeouts, never Enter. The menu passes
-    /// allowPaste false because its own panel holds the keyboard focus a paste would land in.
+    /// allowPaste false because its own panel holds the keyboard focus a paste would land in; its
+    /// recall then runs as its own job, next to a recording, and lands on the clipboard.
     func transcribeAmbient(minutes: Int, allowPaste: Bool) {
-        guard state != .recording, state != .processing else { return }
+        guard !allowPaste || (state != .recording && state != .processing) else { return }
         let samples = AmbientRecorder.shared.buffer.last(minutes * 60 * AmbientBuffer.sampleRate)
         guard !samples.isEmpty else { return }
         let seconds = Double(samples.count) / Double(AmbientBuffer.sampleRate)
@@ -558,6 +598,10 @@ final class NotchStateManager {
                 label: "Ambient, \(Int((seconds / 60).rounded(.up))) min"
             )
             diagnosticsStore.retainAudio(sourceURL: url, for: id)
+            guard allowPaste else {
+                TranscriptionJobs.shared.transcribe(id, audioDuration: seconds, reason: "Ambient recall: last \(Int(seconds)) s", copyWhenDone: true)
+                return
+            }
             // A recording that started while we encoded wins; the audio waits in History.
             guard state != .recording, state != .processing else {
                 diagnosticsStore.markFailed(for: id, message: "Busy with another recording; re-transcribe from History")
@@ -617,7 +661,7 @@ final class NotchStateManager {
         let provider = SettingsManager.shared.transcriptionProvider
         guard provider.isReady else {
             state = .error(provider.notReadyMessage)
-            SettingsWindowController.show()
+            SettingsWindowController.show(tab: .settings)
             processingTask?.cancel()
             processingTask = Task {
                 try? await Task.sleep(for: .seconds(2))
@@ -647,7 +691,7 @@ final class NotchStateManager {
         processingTask?.cancel()
         processingTask = Task {
             do {
-                let transcription = try await transcribe(
+                let (transcription, model) = try await transcribe(
                     audioURL: retainedAudioURL,
                     prompt: prompt,
                     provider: provider,
@@ -671,6 +715,7 @@ final class NotchStateManager {
                     transcriptText: transcription,
                     outputCharacterCount: transcription.count,
                     provider: provider,
+                    model: model,
                     speakerRecognitionEnabled: speakerRecognitionEnabled,
                     promptProvided: prompt != nil
                 )
@@ -709,7 +754,8 @@ final class NotchStateManager {
         }
     }
 
-    private func transcribe(
+    /// One transcription with the given provider; the shortcut's runs and the app's jobs both send through here.
+    func transcribe(
         audioURL: URL,
         prompt: String?,
         provider: TranscriptionProvider,
@@ -717,28 +763,55 @@ final class NotchStateManager {
         audioDuration: TimeInterval?,
         onRetry: (@MainActor @Sendable (_ retryAttempt: Int, _ totalRetries: Int) async -> Void)?,
         onLog: (@MainActor @Sendable (_ message: String, _ level: TranscriptionDiagnosticsEntry.LogLevel) async -> Void)?
-    ) async throws -> String {
+    ) async throws -> (text: String, model: String?) {
         switch provider {
         case .openAI:
-            return try await openAITranscriptionService.transcribe(
+            // The model OpenAI answered with on this run: the primary one or its fallback.
+            let answered = AnsweredModel()
+            let text = try await openAITranscriptionService.transcribe(
                 audioURL: audioURL,
                 prompt: prompt,
                 audioDuration: audioDuration,
                 onRetry: onRetry,
-                onLog: onLog
+                onLog: onLog,
+                onModel: { answered.name = $0 }
             )
+            return (text, answered.name)
         case .elevenLabs:
-            return try await elevenLabsTranscriptionService.transcribe(
+            return (try await elevenLabsTranscriptionService.transcribe(
                 audioURL: audioURL,
                 diarize: speakerRecognitionEnabled,
                 useSpeakerLibrary: speakerRecognitionEnabled
                     && SettingsManager.shared.elevenLabsSpeakerLibraryRecognitionEnabled,
                 onRetry: onRetry,
                 onLog: onLog
-            )
+            ), nil)
         case .parakeet, .phonon2:
-            return try await provider.localModel!.service.transcribe(audioURL: audioURL, onLog: onLog)
+            return (try await provider.localModel!.service.transcribe(audioURL: audioURL, onLog: onLog), nil)
         }
+    }
+
+    /// Puts the earlier part of a resumed recording in front of the retained new part, in place.
+    /// Returns the earlier part's length.
+    private func joinEarlierAudio(_ earlier: URL, before retained: URL, for diagnosticsID: UUID) async throws -> TimeInterval? {
+        let joined = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_joined_\(UUID().uuidString).m4a")
+        do {
+            let earlierDuration = try await AudioFileTranscription.join(earlier, retained, to: joined)
+            diagnosticsStore.retainAudio(sourceURL: joined, for: diagnosticsID)
+            diagnosticsStore.log("Joined the audio from before the cancel in front", for: diagnosticsID)
+            try? FileManager.default.removeItem(at: earlier)
+            return earlierDuration
+        } catch {
+            try? FileManager.default.removeItem(at: joined)
+            // The earlier part stays in the temporary folder rather than being lost.
+            diagnosticsStore.log("Could not join the audio from before the cancel (kept at \(earlier.path)): \(error.localizedDescription)", level: .error, for: diagnosticsID)
+            throw error
+        }
+    }
+
+    private func dropResumedEntry() {
+        if let resumedEntry { try? FileManager.default.removeItem(at: resumedEntry.earlier) }
+        resumedEntry = nil
     }
 
     private func retainRecordingIfNeeded(_ audioURL: URL, diagnosticsID: UUID) {
@@ -769,4 +842,9 @@ final class NotchStateManager {
         processingTimerTask = nil
         processingControlsAvailable = false
     }
+}
+
+@MainActor
+private final class AnsweredModel {
+    var name: String?
 }

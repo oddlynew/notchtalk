@@ -21,9 +21,9 @@ enum AudioFileTranscription {
         label: String,
         reason: String,
         duration: TimeInterval?,
+        copyWhenDone: Bool = false,
         prepare: (URL) async throws -> Void
     ) async -> UUID {
-        let notch = NotchStateManager.shared
         let store = TranscriptionDiagnosticsStore.shared
         // retainAudio moves its source, so it gets a copy and the original file stays put.
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent("notchtalk_file_\(UUID().uuidString).m4a")
@@ -56,14 +56,7 @@ enum AudioFileTranscription {
         guard store.retainAudio(sourceURL: copy, for: id) != nil else {
             return fail("Could not keep a copy of the audio")
         }
-        guard notch.state != .recording, notch.state != .processing else {
-            return fail("Notchtalk was busy with another recording; transcribe it again from History")
-        }
-        // The notch's own missing-key path would leave this entry pending.
-        guard provider.isReady else {
-            return fail(provider.localModel != nil ? provider.notReadyMessage : "No API key for \(provider.displayName)")
-        }
-        notch.retranscribe(diagnosticsID: id, audioDuration: duration, reason: reason, allowPaste: false)
+        TranscriptionJobs.shared.transcribe(id, audioDuration: duration, reason: reason, copyWhenDone: copyWhenDone)
         return id
     }
 
@@ -91,6 +84,33 @@ enum AudioFileTranscription {
         await export.export()
         if let error = export.error { throw error }
         guard export.status == .completed else { throw CocoaError(.fileWriteUnknown) }
+    }
+
+    /// Writes `first` followed by `second` as one .m4a. Returns the length of `first`.
+    static func join(_ first: URL, _ second: URL, to destination: URL) async throws -> TimeInterval {
+        let composition = AVMutableComposition()
+        guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        var cursor = CMTime.zero
+        var firstDuration = CMTime.zero
+        for url in [first, second] {
+            let asset = AVURLAsset(url: url)
+            guard let source = try await asset.loadTracks(withMediaType: .audio).first else { throw CocoaError(.fileReadCorruptFile) }
+            let duration = try await asset.load(.duration)
+            try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: cursor)
+            if url == first { firstDuration = duration }
+            cursor = cursor + duration
+        }
+        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        export.outputURL = destination
+        export.outputFileType = .m4a
+        await export.export()
+        if let error = export.error { throw error }
+        guard export.status == .completed else { throw CocoaError(.fileWriteUnknown) }
+        return firstDuration.seconds
     }
 
     /// The files behind dropped items. A Finder file comes as its URL. Voice Memos, Mail or Safari
@@ -191,10 +211,8 @@ final class FileDrop {
         }
     }
 
-    var isBusy: Bool {
-        let notch = NotchStateManager.shared.state
-        return reading || !VoiceMemoLibrary.shared.preparing.isEmpty || notch == .recording || notch == .processing
-    }
+    /// A drop is still being read. Its transcription runs on its own and blocks nothing.
+    var isBusy: Bool { reading }
 
     /// Takes the first dropped file. Returns false when nothing was started.
     @discardableResult
@@ -207,7 +225,7 @@ final class FileDrop {
         guard AudioFileTranscription.isAudioOrVideo(url) else {
             return reject("\(url.lastPathComponent) has no sound to transcribe. Try an audio or video file.")
         }
-        guard !isBusy else { return reject("Notchtalk is busy. Drop the file again when it's done.") }
+        guard !isBusy else { return reject("Still reading the last file. Drop again in a moment.") }
         name = url.lastPathComponent
         entryID = nil
         outcome = nil
@@ -218,7 +236,8 @@ final class FileDrop {
                 source: url,
                 label: "File: \(url.lastPathComponent)",
                 reason: "Dropped file \(url.lastPathComponent)",
-                duration: duration.flatMap { $0.isFinite ? $0 : nil }
+                duration: duration.flatMap { $0.isFinite ? $0 : nil },
+                copyWhenDone: true
             ) { try await AudioFileTranscription.exportAudio(of: url, to: $0) }
             reading = false
         }
@@ -255,17 +274,24 @@ struct FileDropZone: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 10) {
-            icon.font(.system(size: 16)).frame(width: 20)
-            Text(message).lineLimit(2).truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Choose File…") { choosing = true }
+        HStack(spacing: 12) {
+            icon.font(.system(size: 20)).frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(message).font(.system(size: 13, weight: .semibold)).foregroundStyle(NotchtalkStyle.ink)
+                    .lineLimit(2).truncationMode(.middle)
+                if drop.status == .idle && !drop.hovering {
+                    Text("m4a, mp3, wav, mp4, mov and more. The transcript lands here and on the clipboard.")
+                        .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Choose file…") { choosing = true }.buttonStyle(QuietButtonStyle())
         }
-        .padding(.horizontal, 14).padding(.vertical, 12)
-        .background(NotchtalkStyle.accent.opacity(drop.hovering ? 0.10 : 0.03), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .background(NotchtalkStyle.accent.opacity(drop.hovering ? 0.10 : 0.03), in: RoundedRectangle(cornerRadius: 12))
         .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(drop.hovering ? NotchtalkStyle.accent : .secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(drop.hovering ? NotchtalkStyle.accent : NotchtalkStyle.ink.opacity(0.18), style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
         }
         .onDrop(of: [.fileURL, .audiovisualContent], isTargeted: Binding { drop.hovering } set: { drop.hovering = $0 }) { providers in
             Task { drop.transcribe(await AudioFileTranscription.droppedFiles(providers)) }
@@ -299,7 +325,7 @@ struct FileDropZone: View {
                 }
             case .done: Image(systemName: "doc.on.clipboard").foregroundStyle(NotchtalkStyle.accent)
             case .failed: Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
-            case .idle: Image(systemName: "arrow.down.doc").foregroundStyle(.secondary)
+            case .idle: Image(systemName: "arrow.down.doc").foregroundStyle(NotchtalkStyle.accent)
             }
         }
     }
@@ -307,7 +333,7 @@ struct FileDropZone: View {
     private var message: String {
         if drop.hovering { return drop.isBusy ? "Busy, drop again in a moment" : "Drop to transcribe" }
         switch drop.status {
-        case .idle: return "Drop an audio or video file here to transcribe it"
+        case .idle: return "Drop an audio or video file"
         case .reading(let name): return "Reading \(name)"
         case .transcribing(let name): return "\(manager.processingStatusText) \(name)"
         case .done(let name): return "Transcript of \(name) copied"

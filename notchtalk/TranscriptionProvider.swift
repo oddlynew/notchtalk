@@ -36,6 +36,15 @@ enum TranscriptionProvider: String, CaseIterable, Codable, Identifiable, Sendabl
         }
     }
 
+    /// The one model this provider always uses, or nil when it varies per run (OpenAI falls back to a smaller one).
+    nonisolated var fixedModel: String? {
+        switch self {
+        case .openAI: nil
+        case .elevenLabs: ElevenLabsTranscriptionService.model
+        case .parakeet, .phonon2: localModel!.modelID
+        }
+    }
+
     /// The model that transcribes on this Mac, or nil for a cloud provider.
     nonisolated var localModel: LocalModel? {
         switch self {

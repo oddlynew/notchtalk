@@ -3,96 +3,69 @@ import SwiftUI
 @MainActor
 struct NotchtalkMenu: View {
     let controller: AppController
-    private let manager = NotchStateManager.shared
-    @Bindable private var settings = SettingsManager.shared
-    private let ambient = AmbientRecorder.shared
-    private let call = CallRecorder.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        MenuContent(
+            hasAccessibilityPermission: controller.hasAccessibilityPermission,
+            hasMicrophonePermission: controller.hasMicrophonePermission,
+            openAccessibilitySettings: controller.openAccessibilitySettings,
+            requestMicrophonePermission: controller.requestMicrophonePermission,
+            showAbout: controller.showAbout
+        )
+    }
+}
+
+/// The menu bar panel, on plain values so it renders without starting the app.
+@MainActor
+struct MenuContent: View {
+    let hasAccessibilityPermission: Bool
+    let hasMicrophonePermission: Bool
+    let openAccessibilitySettings: () -> Void
+    let requestMicrophonePermission: () -> Void
+    let showAbout: () -> Void
+    private let manager = NotchStateManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
-                Image(systemName: "waveform").font(.title2).foregroundStyle(NotchtalkStyle.accent)
-                    .frame(width: 40, height: 40).background(NotchtalkStyle.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Notchtalk").font(.system(size: 17, weight: .semibold))
-                    Text(status).font(.caption).foregroundStyle(.secondary)
+                Image(systemName: "waveform").font(.system(size: 20)).foregroundStyle(NotchtalkStyle.accent)
+                    .frame(width: 40, height: 40).background(NotchtalkStyle.accentSoft, in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Notchtalk").font(.system(size: 17, weight: .semibold)).foregroundStyle(NotchtalkStyle.ink)
+                    Text(status).font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
                 }
                 Spacer()
             }
-            if !controller.hasAccessibilityPermission {
-                Button("Allow keyboard access", systemImage: "keyboard") { controller.openAccessibilitySettings() }
+            if !hasAccessibilityPermission {
+                Button("Allow keyboard access", systemImage: "keyboard", action: openAccessibilitySettings)
+                    .buttonStyle(QuietButtonStyle())
             }
-            if !controller.hasMicrophonePermission {
-                Button("Allow microphone", systemImage: "mic") { controller.requestMicrophonePermission() }
+            if !hasMicrophonePermission {
+                Button("Allow microphone", systemImage: "mic", action: requestMicrophonePermission)
+                    .buttonStyle(QuietButtonStyle())
             }
+            AmbientRow(hasMicrophonePermission: hasMicrophonePermission)
+                .padding(.bottom, -6) // 8 pt to the card, closer than the panel's 14 pt
             LatestTranscriptCard()
-            Toggle("Auto-send on release", isOn: $settings.sendWithEnter)
-                .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
-            Toggle("Ambient", isOn: $settings.ambientEnabled)
-                .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
-            if settings.ambientEnabled {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(ambientStatus).font(.caption).foregroundStyle(.secondary)
-                    HStack(spacing: 6) {
-                        Text("Transcribe last").font(.system(size: 11))
-                        ForEach(AmbientRecorder.recallChoices.filter { $0 <= settings.ambientWindowMinutes }, id: \.self) { minutes in
-                            Button("\(minutes) min") { manager.transcribeAmbient(minutes: minutes, allowPaste: false) }
-                                .buttonStyle(QuietButtonStyle())
-                                .disabled(manager.state == .recording || manager.state == .processing)
-                        }
-                    }
-                }
-            }
-            Toggle("Record calls", isOn: $settings.callRecordingEnabled)
-                .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
-            if settings.callRecordingEnabled {
-                Text(callStatus).font(.caption).foregroundStyle(call.problem == nil ? .secondary : Color.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            VStack(spacing: 9) {
-                shortcut("Press right ⌘", detail: "Start recording")
-                let holdToFinish = Int(max(settings.startHoldDelay, ShortcutGesture.minimumHold) * 1000)
-                shortcut("Release before \(holdToFinish) ms", detail: "Keep recording")
-                shortcut("Hold beyond \(holdToFinish) ms", detail: "Release to finish")
-                shortcut("Hold again · \(Int(settings.finishHoldDelay * 1000)) ms", detail: "Finish & send")
-                shortcut("Click ⏸ in the pill", detail: "Pause & resume")
-                shortcut("Release Esc first", detail: "Cancel")
-                shortcut("Hold Esc, release ⌘", detail: "Transcribe only")
-                if settings.ambientEnabled && settings.ambientHotKeyEnabled {
-                    shortcut("Double-tap right ⌥", detail: "Last \(settings.ambientWindowMinutes) min")
-                }
-            }
-            Divider()
             HStack {
-                Button("History & settings", systemImage: "slider.horizontal.3") { SettingsWindowController.show() }
+                Button("↗ Open App") { SettingsWindowController.show() }
+                    .buttonStyle(.plain)
                     .keyboardShortcut(",")
                 Spacer()
                 Menu {
-                    Button("About Notchtalk") { controller.showAbout() }
+                    Button("About Notchtalk", action: showAbout)
                     Button("Quit Notchtalk") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q")
-                } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 22)
-            }.buttonStyle(QuietButtonStyle()).font(.caption)
+                } label: { Text("⋯") }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+            }
+            .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
+            .padding(.top, 12)
+            .overlay(alignment: .top) { NotchtalkStyle.line.frame(height: 1) }
         }
         .padding(20).frame(width: 330)
+        .background(NotchtalkStyle.panel)
         .tint(NotchtalkStyle.accent)
     }
-    private func shortcut(_ key: String, detail: String) -> some View {
-        HStack {
-            Text(key).fontWeight(.medium)
-            Spacer()
-            Text(detail).foregroundStyle(.secondary)
-        }.font(.system(size: 11))
-    }
-    private var ambientStatus: String {
-        guard ambient.isRunning else {
-            return controller.hasMicrophonePermission ? "Not listening, the microphone did not start" : "Needs microphone access"
-        }
-        return "Listening. Keeps the last \(settings.ambientWindowMinutes) min, only on this Mac."
-    }
-    private var callStatus: String {
-        if call.isRecording { return "Recording this call. The transcript lands in History when it ends." }
-        return call.problem ?? "Records both sides of calls on this Mac, iPhone calls and FaceTime."
-    }
+
     private var status: String {
         switch manager.state {
         case .idle: return "Ready when you are"
@@ -104,32 +77,195 @@ struct NotchtalkMenu: View {
     }
 }
 
-/// Shows the latest transcript.
+/// The newest History entry and how it ended, with the one or two things to do next.
 @MainActor
 struct LatestTranscriptCard: View {
     private let manager = NotchStateManager.shared
-    @State private var copied = false
+    private let store = TranscriptionDiagnosticsStore.shared
+    @State private var copiedID: UUID?
+    /// How many entries back from the newest the card shows; the chevrons step through History.
+    @State private var offset = 0
+
+    static let cornerRadius: CGFloat = 12
+
+    init(offset: Int = 0) {
+        _offset = State(initialValue: offset)
+    }
 
     var body: some View {
+        let entries = store.entries
+        let index = min(offset, max(entries.count - 1, 0))
+        let entry = entries.indices.contains(index) ? entries[index] : nil
         VStack(alignment: .leading, spacing: 10) {
-            Text("Latest transcript").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-            Text(manager.latestTranscript ?? "Nothing to copy yet")
-                .font(.system(size: 12)).foregroundStyle(manager.latestTranscript == nil ? .secondary : .primary)
-                .lineSpacing(3).lineLimit(3).frame(minHeight: 42, alignment: .topLeading).frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-                guard let text = manager.latestTranscript else { return }
-                ClipboardService.copy(text)
-                copied = true
-            } label: {
-                Label(copied ? "Copied" : "Copy latest", systemImage: copied ? "checkmark" : "doc.on.doc")
-                    .frame(maxWidth: .infinity)
+            HStack(spacing: 6) {
+                if index == 0 {
+                    Text("Latest transcript").foregroundStyle(NotchtalkStyle.muted)
+                } else if let entry {
+                    Text(entry.createdAt, format: .dateTime.weekday(.abbreviated).hour().minute()).foregroundStyle(NotchtalkStyle.muted)
+                }
+                if let entry {
+                    Text("·").foregroundStyle(NotchtalkStyle.muted)
+                    EntryStatusLabel(status: entry.status)
+                }
+                Spacer(minLength: 4)
+                if entries.count > 1 {
+                    chevron("chevron.left", label: "Earlier transcript", enabled: index < entries.count - 1) { offset = index + 1 }
+                    chevron("chevron.right", label: "Later transcript", enabled: index > 0) { offset = index - 1 }
+                }
             }
-            .buttonStyle(QuietButtonStyle())
-            .disabled(manager.latestTranscript == nil)
+            .font(.system(size: 11, weight: .medium))
+            Text(message(for: entry))
+                .font(.system(size: 12)).foregroundStyle(NotchtalkStyle.ink)
+                .lineSpacing(2).lineLimit(3).frame(minHeight: 42, alignment: .topLeading).frame(maxWidth: .infinity, alignment: .leading)
+            if let entry { actions(for: entry) }
         }
         .padding(14)
-        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055)))
-        .onChange(of: manager.latestTranscript) { _, _ in copied = false }
+        .background(.black.opacity(0.025), in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius).strokeBorder(NotchtalkStyle.line))
+        // A new recording shows up as the latest again.
+        .onChange(of: entries.first?.id) { offset = 0 }
+    }
+
+    private func chevron(_ symbol: String, label: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
+                .frame(width: 16, height: 16).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(NotchtalkStyle.muted)
+        .disabled(!enabled).opacity(enabled ? 1 : 0.35)
+        .help(label).accessibilityLabel(label)
+    }
+
+    @ViewBuilder private func actions(for entry: TranscriptionDiagnosticsEntry) -> some View {
+        let idle = manager.state != .recording && manager.state != .processing
+        let hasAudio = store.retainedAudioURL(for: entry.id) != nil
+        HStack(spacing: 8) {
+            switch entry.status {
+            case .succeeded:
+                Button("Retry", systemImage: "arrow.clockwise") { retry(entry) }
+                    .buttonStyle(QuietButtonStyle())
+                    .disabled(!hasAudio)
+                Button { copy(entry) } label: {
+                    Label(copiedID == entry.id ? "Copied" : "Copy", systemImage: copiedID == entry.id ? "checkmark" : "doc.on.doc")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(QuietButtonStyle(prominent: true))
+            case .failed:
+                Button { retry(entry) } label: {
+                    Label("Retry", systemImage: "arrow.clockwise").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(QuietButtonStyle(prominent: true))
+                .disabled(!hasAudio)
+            case .cancelled:
+                Button("Resume", systemImage: "play.fill") { manager.resume(diagnosticsID: entry.id) }
+                    .buttonStyle(QuietButtonStyle())
+                    .disabled(!idle || !hasAudio)
+                Button { retry(entry) } label: {
+                    Label("Transcribe", systemImage: "waveform").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(QuietButtonStyle(prominent: true))
+                .disabled(!hasAudio)
+            case .recording, .pending:
+                Button {} label: {
+                    Label("Copy", systemImage: "doc.on.doc").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(QuietButtonStyle())
+                .disabled(true)
+            }
+        }
+    }
+
+    private func message(for entry: TranscriptionDiagnosticsEntry?) -> String {
+        guard let entry else { return "Nothing transcribed yet" }
+        let subject = entry.label ?? "the recording from \(entry.createdAt.formatted(date: .omitted, time: .shortened))"
+        switch entry.status {
+        case .succeeded:
+            let text = entry.transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return text.isEmpty ? "No speech in \(subject)" : text
+        case .failed: return "Couldn't transcribe \(subject). Details are in the app."
+        case .cancelled: return "You cancelled \(subject)."
+        case .recording: return "Recording…"
+        case .pending:
+            return "\(manager.activeDiagnosticsID == entry.id ? manager.processingStatusText : "Transcribing") \(subject)…"
+        }
+    }
+
+    private func copy(_ entry: TranscriptionDiagnosticsEntry) {
+        guard let text = entry.transcriptText, !text.isEmpty else { return }
+        ClipboardService.copy(text)
+        copiedID = entry.id
+    }
+
+    /// The menu holds the keyboard focus, so a paste would land in it: the transcript goes to the clipboard.
+    private func retry(_ entry: TranscriptionDiagnosticsEntry) {
+        TranscriptionJobs.shared.transcribe(entry.id, reason: "Retry from the menu", copyWhenDone: true)
+    }
+}
+
+/// Ambient on one low line: the switch, and the recall lengths that fit the window kept in Settings.
+@MainActor
+struct AmbientRow: View {
+    let hasMicrophonePermission: Bool
+    @Bindable private var settings = SettingsManager.shared
+    private let ambient = AmbientRecorder.shared
+    private let manager = NotchStateManager.shared
+
+    var body: some View {
+        HStack(spacing: 6) {
+            MiniSwitch(title: "Ambient", isOn: $settings.ambientEnabled)
+            Text("Ambient").font(.system(size: 12)).foregroundStyle(settings.ambientEnabled ? NotchtalkStyle.ink : NotchtalkStyle.muted)
+            if settings.ambientEnabled && !ambient.isRunning {
+                Circle().fill(.orange).frame(width: 6, height: 6)
+                    .help(hasMicrophonePermission ? "Not listening, the microphone did not start" : "Needs microphone access")
+                    .accessibilityLabel(hasMicrophonePermission ? "Not listening, the microphone did not start" : "Needs microphone access")
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 4) {
+                ForEach(AmbientRecorder.recallChoices.filter { $0 <= settings.ambientWindowMinutes }, id: \.self) { minutes in
+                    Button("\(minutes) min") { manager.transcribeAmbient(minutes: minutes, allowPaste: false) }
+                        .buttonStyle(QuietButtonStyle(size: .tiny))
+                        .accessibilityLabel("Transcribe the last \(minutes) minutes")
+                }
+            }
+            .disabled(!settings.ambientEnabled || !ambient.isRunning)
+        }
+        .lineLimit(1)
+        .frame(height: 22)
+        // Inset by the card's corner radius, so the row lines up with the rounding above it.
+        .padding(.horizontal, LatestTranscriptCard.cornerRadius)
+    }
+}
+
+/// A coloured dot and one word for where an entry stands.
+struct EntryStatusLabel: View {
+    let status: TranscriptionDiagnosticsEntry.Status
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(color)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var title: String {
+        switch status {
+        case .recording: "Recording"
+        case .pending: "Transcribing"
+        case .succeeded: "Done"
+        case .failed: "Failed"
+        case .cancelled: "Cancelled"
+        }
+    }
+
+    private var color: Color {
+        switch status {
+        case .recording: NotchtalkStyle.bad
+        case .pending: NotchtalkStyle.accent
+        case .succeeded: NotchtalkStyle.ok
+        case .failed: NotchtalkStyle.bad
+        case .cancelled: NotchtalkStyle.muted
+        }
     }
 }

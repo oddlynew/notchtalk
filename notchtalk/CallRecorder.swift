@@ -28,7 +28,7 @@ final class CallRecorder {
 
     /// Set while a call is being recorded.
     private(set) var startedAt: Date?
-    /// Shown in the menu when calls can only be recorded from the microphone.
+    /// Shown in Settings under Record calls when a call was recorded on one side only.
     private(set) var problem: String?
     @ObservationIgnored private var watchTask: Task<Void, Never>?
     @ObservationIgnored private var micEngine: AVAudioEngine?
@@ -140,14 +140,8 @@ final class CallRecorder {
             .appendingPathComponent("notchtalk_call_\(Int(startedAt.timeIntervalSince1970)).m4a")
         let previous = handOff
         handOff = Task {
-            // People often dictate right after hanging up; the call waits its turn instead of failing, in memory,
-            // so a quit while it waits leaves nothing behind. Calls queue behind each other the same way.
-            // Busy also covers a dropped file or voice memo still being read, so the call never overtakes one.
-            @MainActor func waitForTurn() async {
-                while FileDrop.shared.isBusy { try? await Task.sleep(for: .seconds(1)) }
-            }
+            // Calls go one after another; each transcribes as its own job, next to any dictation.
             await previous?.value
-            await waitForTurn()
             await AudioFileTranscription.run(
                 source: name,
                 label: "Call, \(Int((seconds / 60).rounded(.up))) min",
@@ -156,8 +150,6 @@ final class CallRecorder {
             ) { url in
                 // Mixing an hour of audio takes a moment, so it stays off the main thread.
                 try await Task.detached { try AmbientRecorder.encode(Self.mix(mic, remote), to: url) }.value
-                // Something may have started while mixing; run starts the transcription right after this returns.
-                await waitForTurn()
             }
         }
     }

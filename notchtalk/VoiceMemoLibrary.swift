@@ -28,7 +28,7 @@ final class VoiceMemoLibrary {
         ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings", isDirectory: true)
     private static let transcribedKey = "transcribedVoiceMemos"
-    private static let labelPrefix = "Voice memo: "
+    static let labelPrefix = "Voice memo: "
 
     private(set) var memos: [VoiceMemo] = []
     /// False when macOS privacy blocks the folder; Full Disk Access for Notchtalk lifts it.
@@ -93,7 +93,7 @@ final class VoiceMemoLibrary {
 
     /// Sends a memo through the shared file path; the transcript lands in History and on the clipboard.
     func transcribe(_ memo: VoiceMemo) {
-        guard !FileDrop.shared.isBusy else { return }
+        guard !preparing.contains(memo.id) else { return }
         preparing.insert(memo.id)
         Task {
             defer { self.preparing.remove(memo.id) }
@@ -183,89 +183,5 @@ final class VoiceMemoLibrary {
         }
         // A read that stops early would show deleted memos with wrong titles; list by file instead.
         return result == SQLITE_DONE ? rows : nil
-    }
-}
-
-@MainActor
-struct VoiceMemosView: View {
-    private var library = VoiceMemoLibrary.shared
-    private var diagnosticsStore = TranscriptionDiagnosticsStore.shared
-    private var notch = NotchStateManager.shared
-    /// Shows a History entry; the memo list reuses History's transcript and log view.
-    let openInHistory: (UUID) -> Void
-
-    init(openInHistory: @escaping (UUID) -> Void) {
-        self.openInHistory = openInHistory
-    }
-
-    var body: some View {
-        Group {
-            if library.accessDenied {
-                ContentUnavailableView {
-                    Label("Notchtalk can't see your voice memos", systemImage: "lock")
-                } description: {
-                    Text("macOS protects the Voice Memos folder. In System Settings, open Privacy & Security, then Full Disk Access, and turn on notchtalk. Then quit and reopen Notchtalk.")
-                } actions: {
-                    Button("Open Full Disk Access") {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
-                    }
-                    Button("Try again") { library.reload() }
-                }
-            } else if library.memos.isEmpty {
-                ContentUnavailableView(
-                    "No voice memos yet",
-                    systemImage: "waveform",
-                    description: Text("New recordings from your iPhone appear here once iCloud has synced them.")
-                )
-            } else {
-                List(library.memos) { memo in
-                    row(memo)
-                }
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { library.reload() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in library.reload() }
-    }
-
-    private func row(_ memo: VoiceMemo) -> some View {
-        let latest = diagnosticsStore.entries.first { $0.sourceAudioFilename == memo.id }
-        let done = library.transcribed.contains(memo.id)
-        // A failed History retry keeps the earlier transcript on its entry.
-        let transcript = diagnosticsStore.entries.first { $0.sourceAudioFilename == memo.id && $0.transcriptText != nil }
-        return HStack(spacing: 12) {
-            Image(systemName: done ? "checkmark.circle.fill" : "waveform")
-                .foregroundStyle(done ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
-                .frame(width: 18)
-                .accessibilityLabel(done ? "Transcribed" : "Not transcribed")
-            VStack(alignment: .leading, spacing: 3) {
-                Text(memo.title).font(.headline).lineLimit(1)
-                HStack(spacing: 10) {
-                    Text(memo.date, format: .dateTime.day().month().year().hour().minute())
-                    if let duration = memo.duration {
-                        Text(Duration.seconds(duration), format: .time(pattern: duration >= 3600 ? .hourMinuteSecond : .minuteSecond))
-                    }
-                }
-                .font(.caption).foregroundStyle(.secondary)
-                if !done, latest?.status == .failed, let error = latest?.errorMessage {
-                    Text(error).font(.caption).foregroundStyle(.red).lineLimit(1)
-                }
-            }
-            Spacer()
-            // A pending entry that is not the running transcription was cut off by a quit; offer it again.
-            if library.preparing.contains(memo.id) || (latest != nil && notch.state == .processing && notch.activeDiagnosticsID == latest?.id) {
-                ProgressView().controlSize(.small)
-            } else if done {
-                // History keeps a limited number of entries; an older memo stays checked without one.
-                if let transcript {
-                    Button("Show transcript") { openInHistory(transcript.id) }
-                }
-            } else {
-                Button("Transcribe") { library.transcribe(memo) }
-                    .disabled(FileDrop.shared.isBusy || !SettingsManager.shared.hasAPIKey)
-            }
-        }
-        .padding(.vertical, 4)
     }
 }

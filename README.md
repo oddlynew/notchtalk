@@ -13,7 +13,7 @@ Notchtalk is intentionally small. It is not planned to be paid, and it is likely
   - Tap **Right Command (⌘)** to start recording.
   - Tap **Right Command (⌘)** again to stop and transcribe.
   - Click the **pause button** in the pill to pause and resume a running recording.
-  - Press **Esc** to cancel a recording immediately. A transcription still running after 10 seconds shows retry and cancel buttons in the pill. Cancelled audio remains available in History for 24 hours.
+  - Press **Esc** to cancel a recording immediately. A transcription still running after 10 seconds shows retry and cancel buttons in the pill. Cancelled audio stays for 24 hours: **Resume** in the menu records on as if the cancel had been a pause, **Transcribe** sends what was recorded.
 - Shows a small “pill” UI near the notch/screen center while active.
 - Lets you choose OpenAI, ElevenLabs Scribe v2, or Parakeet or Phonon-2 on this Mac as the transcription provider.
 - Stores provider API keys separately in the macOS Keychain.
@@ -113,13 +113,13 @@ Notchtalk then runs a small model server on 127.0.0.1 and keeps the selected mod
 
 ## Voice Memos
 
-History & settings -> Voice Memos lists the recordings of Apple's Voice Memos app (synced from your iPhone via iCloud) newest first. **Transcribe** sends one with the selected provider; the transcript lands in History and on the clipboard, and the memo stays in the list with a check. **Show transcript** opens it in History while History still keeps the entry. Spatial Audio recordings from recent iPhones (`.qta`) are listed too; their stereo track is sent as `.m4a`. Notchtalk only reads Apple's files.
+The app's Transcripts list shows the recordings of Apple's Voice Memos app (synced from your iPhone via iCloud) next to everything else; the **Voice Memos** filter shows only them. A memo not transcribed yet has a **Transcribe** button; the transcript lands on its row and on the clipboard. Spatial Audio recordings from recent iPhones (`.qta`) are listed too; their stereo track is sent as `.m4a`. Notchtalk only reads Apple's files.
 
 macOS protects that folder, so Notchtalk needs Full Disk Access once: System Settings -> Privacy & Security -> Full Disk Access -> turn on `notchtalk`, then quit and reopen it. The stable signing identity keeps the grant across rebuilds.
 
 ## Dropping A File
 
-Open History & settings -> History and drag an audio or video file (m4a, mp3, wav, aiff, mp4, mov and anything else macOS plays) onto the drop zone at the top, or click **Choose File…**. The zone shows reading, transcribing and the result. The file goes the same way as a voice memo: the selected provider, the same retries and timeouts, an entry in History and the transcript on the clipboard, never pasted. Its sound is sent as `.m4a`; your file stays where it is.
+Open the app (**Open App** in the menu) and drag an audio or video file (m4a, mp3, wav, aiff, mp4, mov and anything else macOS plays) onto the drop zone above the Transcripts list, or click **Choose File…**. The zone shows reading, transcribing and the result. The file goes the same way as a voice memo: the selected provider, the same retries and timeouts, an entry in History and the transcript on the clipboard, never pasted. Its sound is sent as `.m4a`; your file stays where it is.
 
 ## Recording Calls
 
@@ -135,9 +135,9 @@ The other side comes from a Core Audio process tap on Apple's call processes (`a
 swiftc -parse-as-library -O scripts/verify_call_capture.swift notchtalk/ProcessTap.swift notchtalk/AmbientRecorder.swift -o .build/verify_call && .build/verify_call
 ```
 
-## History & Diagnostics
+## Transcripts & Diagnostics
 
-Settings -> History shows recordings from their start onward, including the stop/cancel trigger, transcript text, and per-run log events such as retries and errors. Exports:
+The app's Transcripts page lists every recording newest first, grouped by day, with its time, a rough status and the provider and model that transcribed it. **Copy** and transcribe again sit on each row; a click opens the whole transcript, and **Details and logs** shows the stop/cancel trigger, retries and every log event. Search on the left, filters (Dictation, Voice Memos, Files, Calls) on the right. Settings -> Data exports:
 
 - JSON (machine-readable)
 - CSV (easy to inspect in a spreadsheet)
@@ -183,15 +183,15 @@ Issues and pull requests are welcome, especially around:
 
 ### Menu and shortcut
 
-The menu bar panel offers **Copy latest** for the most recent successful attempt in the current app run. Starting another attempt immediately disables it; failure, cancellation, or an empty result never falls back to an older transcript. History remains available separately.
+The menu bar panel shows the newest recording and how it ended. Done: **Copy** and **Retry**. Failed: **Retry**. Cancelled: **Resume** and **Transcribe**. While one runs, it says so. Retry and Transcribe put the result on the clipboard, because the open menu holds the keyboard focus. Below it, the Ambient switch and its recall buttons; **Open App** opens Transcripts and Settings.
 
 A provider response with no text is shown as **No speech detected** and recorded as a failed attempt, with the audio retained for retry. It never pastes, clears the clipboard, or sends Enter. Check the selected macOS input device and its input volume when this happens repeatedly.
 
 ### Ambient mode
 
-For the moments you forgot to record. Turn on **Ambient** in the menu or in Settings, and Notchtalk keeps listening into a rolling window of the last 5, 10 or 20 minutes (default 10). When something worth keeping was just said, ask for it:
+For the moments you forgot to record. Turn on **Ambient** with the switch in the menu or in Settings, and Notchtalk keeps listening into a rolling window of the last 5, 10 or 20 minutes (default 10). When something worth keeping was just said, ask for it:
 
-- Menu: **Transcribe last 2 / 5 / 10 / 20 min** (up to the window length). The result goes to the clipboard, because the open menu holds the keyboard focus.
+- Menu: the **2 min / 5 min / 10 min / 20 min** buttons next to the Ambient switch (up to the window kept in Settings). The result goes to the clipboard, because the open menu holds the keyboard focus.
 - Double-tap **right Option (⌥)**: transcribes the whole window and delivers it like a recording (paste at the cursor with Auto-paste, otherwise the clipboard). Never sends Enter. Can be turned off in Settings.
 
 The recall uses the selected provider with the same retries and timeouts as a normal recording. It shows up in History labelled "Ambient, N min", and its audio is retained for 24 hours like every other recording.
