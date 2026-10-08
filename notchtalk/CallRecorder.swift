@@ -140,7 +140,7 @@ final class CallRecorder {
             .appendingPathComponent("notchtalk_call_\(Int(startedAt.timeIntervalSince1970)).m4a")
         let previous = handOff
         handOff = Task {
-            // Calls go one after another; each transcribes in the app's queue, next to any dictation.
+            // Calls go one after another; each transcribes as its own job, next to any dictation.
             await previous?.value
             await AudioFileTranscription.run(
                 source: name,

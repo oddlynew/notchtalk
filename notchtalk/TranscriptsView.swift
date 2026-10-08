@@ -230,7 +230,7 @@ private struct EntryRow: View {
                     Text(title).font(.system(size: 12)).lineLimit(3).truncationMode(.tail)
                     HStack(spacing: 8) {
                         Text(entry.createdAt, format: .dateTime.hour().minute())
-                        EntryStatusLabel(status: entry.status, queued: TranscriptionQueue.shared.isQueued(entry.id))
+                        EntryStatusLabel(status: entry.status)
                         if let model = entry.modelDescription, entry.status != .recording {
                             Text("·   \(model)").font(.system(size: 10)).opacity(0.7)
                         }
@@ -289,7 +289,7 @@ private struct EntryRow: View {
             .buttonStyle(QuietButtonStyle(size: .mini))
             .disabled(text.isEmpty)
             Button {
-                TranscriptionQueue.shared.transcribe(entry.id, reason: "Transcribe again from the app")
+                TranscriptionJobs.shared.transcribe(entry.id, reason: "Transcribe again from the app")
             } label: {
                 Image(systemName: "arrow.clockwise").font(.system(size: 12)).frame(width: 28, height: 28)
                     .background(NotchtalkStyle.chip, in: RoundedRectangle(cornerRadius: 7))

@@ -567,7 +567,7 @@ final class NotchStateManager {
     /// Cuts the newest `minutes` out of the ambient window and transcribes them the way History
     /// re-transcribes: same provider, retries and timeouts, never Enter. The menu passes
     /// allowPaste false because its own panel holds the keyboard focus a paste would land in; its
-    /// recall then runs in the app's queue, next to a recording, and lands on the clipboard.
+    /// recall then runs as its own job, next to a recording, and lands on the clipboard.
     func transcribeAmbient(minutes: Int, allowPaste: Bool) {
         guard !allowPaste || (state != .recording && state != .processing) else { return }
         let samples = AmbientRecorder.shared.buffer.last(minutes * 60 * AmbientBuffer.sampleRate)
@@ -599,7 +599,7 @@ final class NotchStateManager {
             )
             diagnosticsStore.retainAudio(sourceURL: url, for: id)
             guard allowPaste else {
-                TranscriptionQueue.shared.transcribe(id, audioDuration: seconds, reason: "Ambient recall: last \(Int(seconds)) s", copyWhenDone: true)
+                TranscriptionJobs.shared.transcribe(id, audioDuration: seconds, reason: "Ambient recall: last \(Int(seconds)) s", copyWhenDone: true)
                 return
             }
             // A recording that started while we encoded wins; the audio waits in History.
@@ -754,7 +754,7 @@ final class NotchStateManager {
         }
     }
 
-    /// One transcription with the given provider; the shortcut's runs and the app's queue both send through here.
+    /// One transcription with the given provider; the shortcut's runs and the app's jobs both send through here.
     func transcribe(
         audioURL: URL,
         prompt: String?,

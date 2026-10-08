@@ -104,7 +104,7 @@ struct LatestTranscriptCard: View {
                 }
                 if let entry {
                     Text("·").foregroundStyle(NotchtalkStyle.muted)
-                    EntryStatusLabel(status: entry.status, queued: TranscriptionQueue.shared.isQueued(entry.id))
+                    EntryStatusLabel(status: entry.status)
                 }
                 Spacer(minLength: 4)
                 if entries.count > 1 {
@@ -186,7 +186,6 @@ struct LatestTranscriptCard: View {
         case .cancelled: return "You cancelled \(subject)."
         case .recording: return "Recording…"
         case .pending:
-            if TranscriptionQueue.shared.isQueued(entry.id) { return "Waiting to transcribe \(subject)…" }
             return "\(manager.activeDiagnosticsID == entry.id ? manager.processingStatusText : "Transcribing") \(subject)…"
         }
     }
@@ -199,7 +198,7 @@ struct LatestTranscriptCard: View {
 
     /// The menu holds the keyboard focus, so a paste would land in it: the transcript goes to the clipboard.
     private func retry(_ entry: TranscriptionDiagnosticsEntry) {
-        TranscriptionQueue.shared.transcribe(entry.id, reason: "Retry from the menu", copyWhenDone: true)
+        TranscriptionJobs.shared.transcribe(entry.id, reason: "Retry from the menu", copyWhenDone: true)
     }
 }
 
@@ -240,8 +239,6 @@ struct AmbientRow: View {
 /// A coloured dot and one word for where an entry stands.
 struct EntryStatusLabel: View {
     let status: TranscriptionDiagnosticsEntry.Status
-    /// Waiting in the app's queue for a free slot.
-    var queued = false
 
     var body: some View {
         HStack(spacing: 4) {
@@ -254,7 +251,7 @@ struct EntryStatusLabel: View {
     private var title: String {
         switch status {
         case .recording: "Recording"
-        case .pending: queued ? "Queued" : "Transcribing"
+        case .pending: "Transcribing"
         case .succeeded: "Done"
         case .failed: "Failed"
         case .cancelled: "Cancelled"
@@ -264,7 +261,7 @@ struct EntryStatusLabel: View {
     private var color: Color {
         switch status {
         case .recording: NotchtalkStyle.bad
-        case .pending: queued ? NotchtalkStyle.muted : NotchtalkStyle.accent
+        case .pending: NotchtalkStyle.accent
         case .succeeded: NotchtalkStyle.ok
         case .failed: NotchtalkStyle.bad
         case .cancelled: NotchtalkStyle.muted

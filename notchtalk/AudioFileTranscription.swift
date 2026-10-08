@@ -56,7 +56,7 @@ enum AudioFileTranscription {
         guard store.retainAudio(sourceURL: copy, for: id) != nil else {
             return fail("Could not keep a copy of the audio")
         }
-        TranscriptionQueue.shared.transcribe(id, audioDuration: duration, reason: reason, copyWhenDone: copyWhenDone)
+        TranscriptionJobs.shared.transcribe(id, audioDuration: duration, reason: reason, copyWhenDone: copyWhenDone)
         return id
     }
 
@@ -211,7 +211,7 @@ final class FileDrop {
         }
     }
 
-    /// A drop is still being read. Transcribing runs in the queue and blocks nothing.
+    /// A drop is still being read. Its transcription runs on its own and blocks nothing.
     var isBusy: Bool { reading }
 
     /// Takes the first dropped file. Returns false when nothing was started.

@@ -1,18 +1,18 @@
 //
-//  TranscriptionQueue.swift
+//  TranscriptionJobs.swift
 //  notchtalk
 //
 
 import Foundation
 
 /// Transcriptions started in the app or the menu: Transcribe on a voice memo, Retry on an entry, a
-/// dropped file, a call, a recall from the menu. Each is its own job with its own History entry, a few
-/// run at once and the rest wait their turn, and none of them touches the shortcut's recording, which
-/// stays one at a time in NotchStateManager.
+/// dropped file, a call, a recall from the menu. Each starts at once as its own job on its own History
+/// entry and finishes on its own, next to the others and to the shortcut's recording, which stays one
+/// at a time in NotchStateManager. A provider's rate limit shows as that job's error, with its Retry.
 @MainActor
 @Observable
-final class TranscriptionQueue {
-    static let shared = TranscriptionQueue()
+final class TranscriptionJobs {
+    static let shared = TranscriptionJobs()
 
     private struct Job {
         let id: UUID
@@ -20,34 +20,19 @@ final class TranscriptionQueue {
         let copyWhenDone: Bool
     }
 
-    private var waiting: [Job] = []
     private var running: Set<UUID> = []
     private let store = TranscriptionDiagnosticsStore.shared
-
-    /// Cloud providers take a few uploads at once; a local model is loaded once and runs one file at a time.
-    private var limit: Int { SettingsManager.shared.transcriptionProvider.localModel == nil ? 3 : 1 }
-
-    /// The entry waits for a free slot.
-    func isQueued(_ id: UUID) -> Bool { waiting.contains { $0.id == id } }
 
     /// Transcribes the entry's retained audio. `copyWhenDone` puts the text on the clipboard: right
     /// for a single action like a drop, wrong for a list where several finish in any order.
     func transcribe(_ id: UUID, audioDuration: TimeInterval? = nil, reason: String, copyWhenDone: Bool = false) {
-        guard !running.contains(id), !isQueued(id) else { return }
+        guard !running.contains(id) else { return }
+        running.insert(id)
         store.prepareForManualRetry(for: id, reason: reason)
-        waiting.append(Job(id: id, audioDuration: audioDuration, copyWhenDone: copyWhenDone))
-        startNext()
-    }
-
-    private func startNext() {
-        while running.count < limit, !waiting.isEmpty {
-            let job = waiting.removeFirst()
-            running.insert(job.id)
-            Task {
-                await run(job)
-                running.remove(job.id)
-                startNext()
-            }
+        let job = Job(id: id, audioDuration: audioDuration, copyWhenDone: copyWhenDone)
+        Task {
+            await run(job)
+            running.remove(id)
         }
     }
 
