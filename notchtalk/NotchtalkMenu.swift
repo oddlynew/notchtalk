@@ -104,14 +104,11 @@ struct NotchtalkMenu: View {
     }
 }
 
-/// Shows the latest transcript and how a file dropped on the notch fares. The panel takes no drop
-/// itself: it closes as soon as a drag from Finder moves focus away.
+/// Shows the latest transcript.
 @MainActor
 struct LatestTranscriptCard: View {
     private let manager = NotchStateManager.shared
-    private let drop = FileDrop.shared
     @State private var copied = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -119,7 +116,6 @@ struct LatestTranscriptCard: View {
             Text(manager.latestTranscript ?? "Nothing to copy yet")
                 .font(.system(size: 12)).foregroundStyle(manager.latestTranscript == nil ? .secondary : .primary)
                 .lineSpacing(3).lineLimit(3).frame(minHeight: 42, alignment: .topLeading).frame(maxWidth: .infinity, alignment: .leading)
-            dropSlot
             Button {
                 guard let text = manager.latestTranscript else { return }
                 ClipboardService.copy(text)
@@ -135,36 +131,5 @@ struct LatestTranscriptCard: View {
         .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.055)))
         .onChange(of: manager.latestTranscript) { _, _ in copied = false }
-    }
-    /// Says where files go, then shows reading, progress, the result and failures.
-    @ViewBuilder private var dropSlot: some View {
-        let status = drop.status
-        HStack(spacing: 8) {
-            switch status {
-            case .idle:
-                Image(systemName: "arrow.up.doc").foregroundStyle(.secondary)
-                Text("Drag an audio or video file onto \(NSScreen.screens.contains { $0.safeAreaInsets.top > 0 } ? "the notch" : "the middle of the menu bar") to transcribe it").foregroundStyle(.secondary)
-            case .done(let name):
-                Image(systemName: "doc.on.clipboard").foregroundStyle(NotchtalkStyle.accent)
-                Text("Transcript of \(name) copied").lineLimit(1).truncationMode(.middle)
-            case .reading(let name), .transcribing(let name):
-                if reduceMotion {
-                    Image(systemName: "hourglass").foregroundStyle(NotchtalkStyle.accent)
-                } else {
-                    ProgressView().controlSize(.mini)
-                }
-                Text(status == .reading(name) ? "Reading \(name)" : "\(manager.processingStatusText) \(name)")
-                    .lineLimit(1).truncationMode(.middle)
-            case .failed(let message):
-                Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
-                Text(message).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .font(.system(size: 11))
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
     }
 }
