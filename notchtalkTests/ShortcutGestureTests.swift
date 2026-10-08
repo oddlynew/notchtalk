@@ -96,6 +96,11 @@ struct ShortcutGestureTests {
   #expect(paste.release(now: 40.2) == false)
   #expect(!paste.secondPress(now: 40.3, holdDelay: 0.8))
 
+  // Another key between the taps makes the second press a normal finish.
+  paste.recordingStarted(now: 45)
+  paste.interrupt()
+  #expect(!paste.secondPress(now: 45.2, holdDelay: 0.8))
+
   // A chord or Escape calls the paste off.
   paste.recordingStarted(now: 50)
   #expect(paste.secondPress(now: 50.2, holdDelay: 0.8))

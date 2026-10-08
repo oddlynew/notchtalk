@@ -112,8 +112,9 @@ final class HotKeyManager: @unchecked Sendable {
         if keyCode == 53 && (type == .keyDown || type == .keyUp) {
             var captured = escapeGesture.capturesEvents
             if type == .keyDown {
-                // Escape also calls off a double-tap paste that is still waiting for its release.
+                // Escape also calls off a double tap, between the taps or while the paste waits for its release.
                 MainActor.assumeIsolated {
+                    NotchStateManager.shared.interruptPasteGesture()
                     if NotchStateManager.shared.pasteGesturePending { NotchStateManager.shared.abandonFinishGesture() }
                 }
                 let recording = MainActor.assumeIsolated { NotchStateManager.shared.state == .recording }
@@ -134,6 +135,8 @@ final class HotKeyManager: @unchecked Sendable {
             return captured ? nil : Unmanaged.passUnretained(event)
         }
         if type == .keyDown || (type == .flagsChanged && keyCode != 54) {
+            // Any other key between the two taps of right Command makes them no double tap.
+            DispatchQueue.main.async { NotchStateManager.shared.interruptPasteGesture() }
             lock.lock()
             let wasHolding = gesture.down
             gesture.cancel()
