@@ -83,5 +83,7 @@ struct PasteGesture {
         self.deadline = nil
         return now >= deadline
     }
+    /// Another key before the second press: that press finishes the recording as before.
+    mutating func interrupt() { startedAt = nil }
     mutating func cancel() { startedAt = nil; deadline = nil }
 }

@@ -239,6 +239,8 @@ final class NotchStateManager {
         finishProgress = nil
     }
 
+    func interruptPasteGesture() { pasteGesture.interrupt() }
+
     func releaseFinishGesture() {
         if let submit = pasteGesture.release() { return finishPasteGesture(submit: submit) }
         guard finishProgress != nil, state == .recording else { return }

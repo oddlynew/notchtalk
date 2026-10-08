@@ -181,8 +181,8 @@ final class TranscriptionDiagnosticsStore {
             logs: [.init(level: .info, message: "Recording started")]
         )
 
+        // Trimmed once the recording ends: a double tap drops this entry again, and must not cost an old one.
         entries.insert(entry, at: 0)
-        trimIfNeeded()
         persistToDisk()
         return id
     }
@@ -195,6 +195,7 @@ final class TranscriptionDiagnosticsStore {
         stopTrigger: String,
         recordingDuration: TimeInterval
     ) {
+        trimIfNeeded()
         mutateEntry(id) { entry in
             entry.status = .pending
             entry.provider = provider
