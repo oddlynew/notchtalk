@@ -82,17 +82,34 @@ struct LatestTranscriptCard: View {
     private let manager = NotchStateManager.shared
     private let store = TranscriptionDiagnosticsStore.shared
     @State private var copiedID: UUID?
+    /// How many entries back from the newest the card shows; the chevrons step through History.
+    @State private var offset = 0
 
     static let cornerRadius: CGFloat = 12
 
+    init(offset: Int = 0) {
+        _offset = State(initialValue: offset)
+    }
+
     var body: some View {
-        let entry = store.entries.first
+        let entries = store.entries
+        let index = min(offset, max(entries.count - 1, 0))
+        let entry = entries.indices.contains(index) ? entries[index] : nil
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Text("Latest transcript").foregroundStyle(NotchtalkStyle.muted)
+                if index == 0 {
+                    Text("Latest transcript").foregroundStyle(NotchtalkStyle.muted)
+                } else if let entry {
+                    Text(entry.createdAt, format: .dateTime.weekday(.abbreviated).hour().minute()).foregroundStyle(NotchtalkStyle.muted)
+                }
                 if let entry {
                     Text("·").foregroundStyle(NotchtalkStyle.muted)
                     EntryStatusLabel(status: entry.status)
+                }
+                Spacer(minLength: 4)
+                if entries.count > 1 {
+                    chevron("chevron.left", label: "Earlier transcript", enabled: index < entries.count - 1) { offset = index + 1 }
+                    chevron("chevron.right", label: "Later transcript", enabled: index > 0) { offset = index - 1 }
                 }
             }
             .font(.system(size: 11, weight: .medium))
@@ -104,6 +121,19 @@ struct LatestTranscriptCard: View {
         .padding(14)
         .background(.black.opacity(0.025), in: RoundedRectangle(cornerRadius: Self.cornerRadius))
         .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius).strokeBorder(NotchtalkStyle.line))
+        // A new recording shows up as the latest again.
+        .onChange(of: entries.first?.id) { offset = 0 }
+    }
+
+    private func chevron(_ symbol: String, label: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
+                .frame(width: 16, height: 16).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(NotchtalkStyle.muted)
+        .disabled(!enabled).opacity(enabled ? 1 : 0.35)
+        .help(label).accessibilityLabel(label)
     }
 
     @ViewBuilder private func actions(for entry: TranscriptionDiagnosticsEntry) -> some View {
