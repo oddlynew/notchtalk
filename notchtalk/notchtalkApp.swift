@@ -72,7 +72,8 @@ final class AppController {
         }
         HotKeyManager.shared.onChordCancel = { [weak self] in
             guard let self else { return }
-            if self.stateManager.finishProgress != nil {
+            // A chord on the second tap (Command+C) is a shortcut, never a paste.
+            if self.stateManager.finishProgress != nil || self.stateManager.pasteGesturePending {
                 self.stateManager.abandonFinishGesture()
                 return
             }
