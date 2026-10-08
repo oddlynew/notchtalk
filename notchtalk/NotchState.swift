@@ -185,7 +185,7 @@ final class NotchStateManager {
         }
     }
 
-    /// Pausing keeps the recording open; AVAudioRecorder resumes into the same file,
+    /// Pausing keeps the recording open; the recorder resumes into the same file,
     /// so the paused time never reaches the audio or the transcript.
     func togglePause() {
         guard state == .recording, finishProgress == nil else { return }

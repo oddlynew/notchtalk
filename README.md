@@ -103,6 +103,7 @@ Use `./script/build_and_run.sh --verify` to launch and verify that the process s
 - While transcribing, you will see “Transcribing” or “Retrying (n/N)” in the pill UI.
 - On success, if **Auto-paste** is enabled, Notchtalk pastes at your cursor and shows “Pasted!” (your clipboard is restored immediately after).
 - If **Auto-paste** is disabled, Notchtalk copies the transcription to the clipboard and shows “Copied!”.
+- With AirPods or another Bluetooth headset as input, Notchtalk records through the built-in microphone, so the headset keeps its full sound quality. A recording keeps the microphone it started with, even when a headset connects meanwhile.
 
 ## Parakeet And Phonon-2 On This Mac
 
