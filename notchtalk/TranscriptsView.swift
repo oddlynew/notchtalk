@@ -227,7 +227,7 @@ private struct EntryRow: View {
             HStack(spacing: 12) {
                 SourceTile(icon: source.icon)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13)).lineLimit(1).truncationMode(.tail)
+                    Text(title).font(.system(size: 12)).lineLimit(3).truncationMode(.tail)
                     HStack(spacing: 8) {
                         Text(entry.createdAt, format: .dateTime.hour().minute())
                         EntryStatusLabel(status: entry.status)
@@ -237,6 +237,7 @@ private struct EntryRow: View {
                     }
                     .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
                 }
+                .modifier(ThreeLineRow())
                 Spacer(minLength: 8)
                 actions
             }
@@ -263,11 +264,11 @@ private struct EntryRow: View {
 
     private var title: String {
         if let text = entry.transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-            let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+            let preview = text.split(whereSeparator: \.isNewline).joined(separator: " ")
             if let label = entry.label, TranscriptsView.Source(entry) == .voiceMemo || TranscriptsView.Source(entry) == .file {
-                return "\(label) · \(firstLine)"
+                return "\(label) · \(preview)"
             }
-            return firstLine
+            return preview
         }
         return entry.label ?? "Recording from \(entry.createdAt.formatted(date: .omitted, time: .shortened))"
     }
@@ -314,7 +315,7 @@ private struct MemoRow: View {
         HStack(spacing: 12) {
             SourceTile(icon: "waveform")
             VStack(alignment: .leading, spacing: 2) {
-                Text("Voice memo · \(memo.title)").font(.system(size: 13)).lineLimit(1)
+                Text("Voice memo · \(memo.title)").font(.system(size: 12)).lineLimit(3)
                 HStack(spacing: 8) {
                     Text(memo.date, format: .dateTime.hour().minute())
                     if let duration = memo.duration {
@@ -324,6 +325,7 @@ private struct MemoRow: View {
                 }
                 .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
             }
+            .modifier(ThreeLineRow())
             Spacer(minLength: 8)
             if library.preparing.contains(memo.id) {
                 ProgressView().controlSize(.small)
@@ -334,6 +336,20 @@ private struct MemoRow: View {
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 9)
+    }
+}
+
+/// Every row is as high as three lines of transcript and the time line; a short text sits at the top.
+private struct ThreeLineRow: ViewModifier {
+    func body(content: Content) -> some View {
+        ZStack(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(" ").font(.system(size: 12)).lineLimit(3, reservesSpace: true)
+                Text(" ").font(.system(size: 11))
+            }
+            .hidden()
+            content
+        }
     }
 }
 

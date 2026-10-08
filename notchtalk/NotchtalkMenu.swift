@@ -44,8 +44,8 @@ struct MenuContent: View {
                 Button("Allow microphone", systemImage: "mic", action: requestMicrophonePermission)
                     .buttonStyle(QuietButtonStyle())
             }
-            LatestTranscriptCard()
             AmbientRow(hasMicrophonePermission: hasMicrophonePermission)
+            LatestTranscriptCard()
             HStack {
                 Button("↗ Open App") { SettingsWindowController.show() }
                     .buttonStyle(.plain)
