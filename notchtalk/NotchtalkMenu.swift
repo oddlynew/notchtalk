@@ -45,6 +45,7 @@ struct MenuContent: View {
                     .buttonStyle(QuietButtonStyle())
             }
             AmbientRow(hasMicrophonePermission: hasMicrophonePermission)
+                .padding(.bottom, -6) // 8 pt to the card, closer than the panel's 14 pt
             LatestTranscriptCard()
             HStack {
                 Button("↗ Open App") { SettingsWindowController.show() }
@@ -219,7 +220,7 @@ struct AmbientRow: View {
                     .accessibilityLabel(hasMicrophonePermission ? "Not listening, the microphone did not start" : "Needs microphone access")
             }
             Spacer(minLength: 8)
-            HStack(spacing: 2) {
+            HStack(spacing: 4) {
                 ForEach(AmbientRecorder.recallChoices.filter { $0 <= settings.ambientWindowMinutes }, id: \.self) { minutes in
                     Button("\(minutes) min") { manager.transcribeAmbient(minutes: minutes, allowPaste: false) }
                         .buttonStyle(QuietButtonStyle(size: .tiny))
