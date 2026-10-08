@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The palette of the approved redesign mockup, light and dark.
 enum NotchtalkStyle {
-    static let accent = dynamic(light: rgb(0x6b5cff), dark: rgb(0x8b7dff))
-    static let accentSoft = dynamic(light: rgb(0x6b5cff, 0.10), dark: rgb(0x8b7dff, 0.18))
+    /// The muted sage Notchtalk had before the redesign.
+    static let accent = dynamic(light: NSColor(srgbRed: 0.29, green: 0.40, blue: 0.36, alpha: 1), dark: NSColor(srgbRed: 0.48, green: 0.59, blue: 0.55, alpha: 1))
+    static let accentSoft = dynamic(light: NSColor(srgbRed: 0.29, green: 0.40, blue: 0.36, alpha: 0.10), dark: NSColor(srgbRed: 0.48, green: 0.59, blue: 0.55, alpha: 0.18))
     static let panel = dynamic(light: rgb(0xffffff), dark: rgb(0x2a2a2d))
     /// The expanded transcript sits on this, one step off the panel.
     static let sheet = dynamic(light: rgb(0xffffff), dark: rgb(0x1f1f22))
@@ -54,13 +55,15 @@ struct QuietButtonStyle: ButtonStyle {
         let prominent: Bool
         let size: Size
         @State private var hovered = false
+        @Environment(\.colorScheme) private var colorScheme
 
         var body: some View {
             let radius: CGFloat = size == .tiny ? 6 : 8
             configuration.label
                 .labelStyle(GapLabelStyle())
                 .font(.system(size: size == .regular ? 12 : 11))
-                .foregroundStyle(prominent ? Color.white : NotchtalkStyle.ink)
+                // White on the light sage, black on the brighter dark-mode sage, for contrast.
+                .foregroundStyle(prominent ? (colorScheme == .dark ? Color.black : Color.white) : NotchtalkStyle.ink)
                 .padding(.horizontal, size == .regular ? 10 : size == .mini ? 8 : 4)
                 .padding(.vertical, size == .regular ? 7 : size == .mini ? 5 : 1)
                 .background(prominent ? AnyShapeStyle(NotchtalkStyle.accent) : AnyShapeStyle(NotchtalkStyle.chip), in: RoundedRectangle(cornerRadius: radius))
