@@ -70,7 +70,7 @@ final class AmbientBuffer {
 }
 
 /// Listens continuously into an AmbientBuffer while ambient mode is on.
-/// Runs its own AVAudioEngine next to the AVAudioRecorder of normal recordings:
+/// Runs its own capture next to the one of normal recordings:
 /// macOS lets several clients read the same input device at once, so neither path waits for the other.
 @MainActor
 @Observable
@@ -82,6 +82,7 @@ final class AmbientRecorder {
     // Holds memory only while listening; `update` sizes it to the window.
     let buffer = AmbientBuffer(capacity: 1)
     private var engine: AVAudioEngine?
+    private var microphone: AudioRecorder.Microphone?
     private var configurationObserver: NSObjectProtocol?
     private var sleepObservers: [NSObjectProtocol] = []
     private var asleep = false
@@ -111,11 +112,26 @@ final class AmbientRecorder {
 
     private func start() {
         guard !asleep else { return }
+        // AVAudioEngine cannot hold the built-in microphone while a headset is the default input.
+        if let device = Self.preferredInputDevice() {
+            do {
+                let (buffer, session) = (buffer, buffer.session)
+                microphone = try AudioRecorder.Microphone(device: device) { samples in
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            if buffer.session == session { buffer.append(samples) }
+                        }
+                    }
+                }
+                isRunning = true
+            } catch {
+                NSLog("Ambient: built-in microphone failed to start: \(error.localizedDescription)")
+                retryLater()
+            }
+            return
+        }
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        if let device = Self.preferredInputDevice() {
-            Self.pin(input, to: device)
-        }
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0,
               let tap = Self.makeTap(from: inputFormat, into: buffer, session: buffer.session) else {
@@ -143,8 +159,7 @@ final class AmbientRecorder {
         ) { [weak self] _ in
             // Apple: never tear the engine down inside this notification's handler, it can deadlock.
             Task { @MainActor [weak self] in
-                // Pinning the built-in microphone posts this too, with the engine still running. Restarting then
-                // pins again and loops, several new engines a second, until a torn-down one corrupts memory.
+                // A change can arrive with the engine still running; restarting then would loop.
                 guard let self, self.isRunning, !engine.isRunning else { return }
                 self.stopEngine()
                 self.start()
@@ -196,6 +211,8 @@ final class AmbientRecorder {
         configurationObserver = nil
         Self.retire(engine)
         engine = nil
+        microphone?.stop()
+        microphone = nil
         isRunning = false
     }
 
@@ -222,6 +239,12 @@ final class AmbientRecorder {
         return builtInInputDevice()
     }
 
+    /// The microphone a recording keeps until it ends: the built-in one instead of a Bluetooth headset,
+    /// else the default input as it is now, so a headset connecting mid-recording does not take over.
+    nonisolated static func recordingInputDevice() -> AudioDeviceID? {
+        preferredInputDevice() ?? property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, AudioDeviceID(0))
+    }
+
     nonisolated static func builtInInputDevice() -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -243,20 +266,6 @@ final class AmbientRecorder {
                 && AudioObjectGetPropertyDataSize(device, &streams, 0, nil, &streamSize) == noErr
                 && streamSize > 0
         }
-    }
-
-    nonisolated static func pin(_ input: AVAudioInputNode, to device: AudioDeviceID) {
-        guard let unit = input.audioUnit else { return }
-        var device = device
-        let status = AudioUnitSetProperty(
-            unit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &device,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-        if status != noErr { NSLog("Ambient: could not switch to the built-in microphone (\(status))") }
     }
 
     private nonisolated static func property<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ initial: T) -> T? {
