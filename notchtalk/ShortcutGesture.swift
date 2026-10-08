@@ -60,3 +60,28 @@ struct DoubleTapGesture {
         return false
     }
 }
+
+// Right Command twice: the second press within 0.4 s of the press that started a recording pastes the
+// last transcript instead of finishing. Held as long as the finish gesture, the paste also sends Enter.
+struct PasteGesture {
+    static let window: TimeInterval = 0.4
+    private var startedAt: TimeInterval?
+    private(set) var deadline: TimeInterval?
+    var pending: Bool { deadline != nil }
+
+    mutating func recordingStarted(now: TimeInterval = ProcessInfo.processInfo.systemUptime) { startedAt = now }
+    /// True when this press is the second tap; the caller drops the first tap's recording.
+    mutating func secondPress(now: TimeInterval = ProcessInfo.processInfo.systemUptime, holdDelay: TimeInterval) -> Bool {
+        guard let startedAt, now - startedAt <= Self.window else { return false }
+        self.startedAt = nil
+        deadline = now + holdDelay
+        return true
+    }
+    /// Whether the paste sends Enter, or nil when no paste is waiting.
+    mutating func release(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool? {
+        guard let deadline else { return nil }
+        self.deadline = nil
+        return now >= deadline
+    }
+    mutating func cancel() { startedAt = nil; deadline = nil }
+}

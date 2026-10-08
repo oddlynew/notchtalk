@@ -70,4 +70,36 @@ struct ShortcutGestureTests {
   #expect(!taps.handle(key: true, down: true, now: 4.7))
   #expect(!taps.handle(key: true, down: false, now: 5.5))
  }
+ @Test func pasteGesture() {
+  var paste = PasteGesture()
+  // No recording started yet: a press finishes as before.
+  #expect(!paste.secondPress(now: 1, holdDelay: 0.8))
+
+  // A quick second tap pastes without Enter.
+  paste.recordingStarted(now: 10)
+  #expect(paste.secondPress(now: 10.3, holdDelay: 0.8))
+  #expect(paste.pending)
+  #expect(paste.release(now: 10.5) == false)
+  #expect(!paste.pending)
+  #expect(paste.release(now: 10.6) == nil)
+
+  // A second press held through the finish delay pastes with Enter.
+  paste.recordingStarted(now: 20)
+  #expect(paste.secondPress(now: 20.4, holdDelay: 0.8))
+  #expect(paste.release(now: 21.2) == true)
+
+  // A second press after the window is the normal finish; one recording gives one paste at most.
+  paste.recordingStarted(now: 30)
+  #expect(!paste.secondPress(now: 30.41, holdDelay: 0.8))
+  paste.recordingStarted(now: 40)
+  #expect(paste.secondPress(now: 40.1, holdDelay: 0.8))
+  #expect(paste.release(now: 40.2) == false)
+  #expect(!paste.secondPress(now: 40.3, holdDelay: 0.8))
+
+  // A chord or Escape calls the paste off.
+  paste.recordingStarted(now: 50)
+  #expect(paste.secondPress(now: 50.2, holdDelay: 0.8))
+  paste.cancel()
+  #expect(paste.release(now: 50.3) == nil)
+ }
 }
