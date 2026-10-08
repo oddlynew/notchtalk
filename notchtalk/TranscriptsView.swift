@@ -237,7 +237,6 @@ private struct EntryRow: View {
                     }
                     .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
                 }
-                .modifier(ThreeLineRow())
                 Spacer(minLength: 8)
                 actions
             }
@@ -325,7 +324,6 @@ private struct MemoRow: View {
                 }
                 .font(.system(size: 11)).foregroundStyle(NotchtalkStyle.muted)
             }
-            .modifier(ThreeLineRow())
             Spacer(minLength: 8)
             if library.preparing.contains(memo.id) {
                 ProgressView().controlSize(.small)
@@ -336,20 +334,6 @@ private struct MemoRow: View {
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 9)
-    }
-}
-
-/// Every row is as high as three lines of transcript and the time line; a short text sits at the top.
-private struct ThreeLineRow: ViewModifier {
-    func body(content: Content) -> some View {
-        ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(" ").font(.system(size: 12)).lineLimit(3, reservesSpace: true)
-                Text(" ").font(.system(size: 11))
-            }
-            .hidden()
-            content
-        }
     }
 }
 
