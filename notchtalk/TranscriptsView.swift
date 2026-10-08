@@ -224,7 +224,7 @@ private struct EntryRow: View {
     var body: some View {
         let source = TranscriptsView.Source(entry)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
                 SourceTile(icon: source.icon)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).font(.system(size: 12)).lineLimit(3).truncationMode(.tail)
@@ -312,7 +312,7 @@ private struct MemoRow: View {
     private let library = VoiceMemoLibrary.shared
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             SourceTile(icon: "waveform")
             VStack(alignment: .leading, spacing: 2) {
                 Text("Voice memo · \(memo.title)").font(.system(size: 12)).lineLimit(3)
